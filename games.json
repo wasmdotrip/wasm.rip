@@ -124,5 +124,12 @@
     "gameUrl": "files/happy-room/index.html",
     "imageUrl": "img/happy-room.png",
     "porter": "gurtmuncher"
+  },
+  {
+    "id": 19,
+    "name": "The Adventures Of Sir Kicksalot",
+    "gameUrl": "files/sir-kicksalot/index.html",
+    "imageUrl": "img/sirkicksalot.png",
+    "porter": "turg"
   }
 ]
