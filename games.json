@@ -215,5 +215,13 @@
     "imageUrl": "img/ClusterTruck.png",
     "porter": "NotRexed",
     "featured": true
+  },
+  {
+    "id": 31,
+    "name": "HowToFish",
+    "gameUrl": "files/HowToFish/HowToFish.html",
+    "imageUrl": "img/fish.png",
+    "porter": "NotRexed",
+    "featured": true
   }
 ]
