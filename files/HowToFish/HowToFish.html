@@ -126,6 +126,11 @@ function unityShowBanner(msg, type) {
   updateBannerVisibility();
 }
 
+// Non-fatal Unity warnings arrive as alert() ("This page says...") and as an on-page
+// banner; neither helps a player, so route both to the console.
+window.alert = function (m) { console.warn("[unity]", m); };
+unityShowBanner = function (msg, type) { console.warn("[unity " + (type || "info") + "]", msg); };
+
 var repoBase = "https://raw.githubusercontent.com/NotRexed/HowToFishPort/main/";
 var buildUrl = repoBase + "Build";
 var loaderUrl = buildUrl + "/WebGL.loader.js";
