@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Global Strike</title>
+    <script type="module" crossorigin src="./assets/index-ZCNf7X22.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-LavI3l2E.css">
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <div id="launcher">
+      <main class="panel">
+        <h1>Global Strike</h1>
+
+        <h2>Choose a server</h2>
+        <ul id="server-list" class="servers"></ul>
+        <button id="add-toggle" class="link" type="button">+ Add custom server</button>
+        <div id="add-form" class="add-form" hidden>
+          <input id="add-name" class="cs-input" type="text" maxlength="30" placeholder="Server name" autocomplete="off" />
+          <input id="add-address" class="cs-input" type="text" placeholder="/cs16/myserver/websocket or host:port" autocomplete="off" spellcheck="false" />
+          <div class="add-actions">
+            <button id="add-save" class="cs-btn" type="button">Add</button>
+            <button id="add-cancel" class="link" type="button">Cancel</button>
+          </div>
+          <p id="add-error" class="error" hidden></p>
+        </div>
+
+        <h2>Your name</h2>
+        <input
+          id="player-name"
+          class="cs-input"
+          type="text"
+          maxlength="18"
+          placeholder="4-18 characters"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p id="name-error" class="error" hidden></p>
+
+        <details id="options">
+          <summary>Options</summary>
+          <div id="option-list" class="options"></div>
+        </details>
+
+        <hr class="cs-hr" />
+        <button id="play" class="cs-btn play" type="button" disabled>Play</button>
+        <p id="status" class="status"></p>
+      </main>
+    </div>
+
+    <div id="boot" hidden>
+      <p id="boot-status">Starting&hellip;</p>
+      <div class="cs-progress-bar">
+        <div class="bars"></div>
+        <div id="boot-cover" class="cover"></div>
+      </div>
+    </div>
+
+  </body>
+</html>

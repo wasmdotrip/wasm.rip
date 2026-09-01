@@ -1,0 +1,74 @@
+{
+  "_comment": "Endpoint + server list for the CS 1.6 launcher. Edit and redeploy - no client rebuild needed. 'signal' is the WebRTC signalling endpoint (path on this host, or a full ws:// URL); 'probe' is any small file on the same listener, used to measure round-trip time.",
+  "gamefiles": "/cs16/gamefiles.zip",
+  "servers": [
+    {
+      "id": "dust2",
+      "name": "Global | de_dust2",
+      "map": "de_dust2",
+      "slots": 16,
+      "region": "US Central",
+      "tags": [
+        "Classic",
+        "No friendly fire"
+      ],
+      "signal": "/cs16/dust2/websocket",
+      "probe": "/cs16/dust2/favicon-16x16.png",
+      "status": "/cs16/status"
+    },
+    {
+      "id": "classic",
+      "name": "Global | Classic Rotation",
+      "map": "de_inferno",
+      "maps": [
+        "de_dust2",
+        "de_inferno",
+        "de_nuke",
+        "cs_office",
+        "de_aztec",
+        "de_train",
+        "de_dust",
+        "cs_italy",
+        "de_cbble",
+        "de_prodigy"
+      ],
+      "slots": 16,
+      "region": "US Central",
+      "tags": [
+        "Map rotation",
+        "No friendly fire"
+      ],
+      "signal": "/cs16/classic/websocket",
+      "probe": "/cs16/classic/favicon-16x16.png",
+      "status": "/cs16/status"
+    },
+    {
+      "id": "inferno",
+      "name": "Global | de_inferno",
+      "map": "de_inferno",
+      "slots": 16,
+      "region": "US Central",
+      "tags": [
+        "Classic",
+        "No friendly fire"
+      ],
+      "signal": "/cs16/inferno/websocket",
+      "probe": "/cs16/inferno/favicon-16x16.png",
+      "status": "/cs16/status"
+    },
+    {
+      "id": "office",
+      "name": "Global | de_vertigo",
+      "map": "de_vertigo",
+      "slots": 16,
+      "region": "US Central",
+      "tags": [
+        "Classic",
+        "No friendly fire"
+      ],
+      "signal": "/cs16/office/websocket",
+      "probe": "/cs16/office/favicon-16x16.png",
+      "status": "/cs16/status"
+    }
+  ]
+}

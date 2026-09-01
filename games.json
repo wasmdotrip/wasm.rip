@@ -223,5 +223,12 @@
     "imageUrl": "img/fish.png",
     "porter": "NotRexed",
     "featured": true
-  }
+  },
+  {
+    "id": 32,
+    "name": "Global Strike (CS 1.6)",
+    "gameUrl": "files/gstrike/index.html",
+    "imageUrl": "img/cstrike.jpg",
+    "porter": "crackers"
+  },
 ]
