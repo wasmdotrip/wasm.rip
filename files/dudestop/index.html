@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <base href="https://cdn.jsdelivr.net/gh/dashiellbenton/ports@6953b870f9f8ac49191dec7c4293dcd8917bf00d/dudestop/">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dude, Stop</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <style>
+      #credit { position: fixed; right: 12px; bottom: 10px; z-index: 6; text-align: right;
+                font: 12px/1.5 monospace; pointer-events: auto; }
+      #credit span { display: block; color: #777; }
+      #credit a { display: block; color: #7cc242; text-decoration: none; }
+      #credit a:hover { text-decoration: underline; }
+
+      html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+      #wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+      #gameContainer { position: relative; background: #000; }
+      #gameContainer canvas { width: 100% !important; height: 100% !important; display: block; }
+      #progress { position: absolute; left: 50%; top: 50%; width: 40%; height: 6px; margin-left: -20%;
+                  background: #333; border-radius: 3px; overflow: hidden; }
+      #progress div { height: 100%; width: 0; background: #e6e6e6; }
+      #fs { position: fixed; right: 10px; bottom: 10px; width: 34px; height: 34px; border: 0; border-radius: 4px;
+            background: rgba(255,255,255,.12) url(TemplateData/fullscreen.png) center no-repeat; cursor: pointer; opacity: .5; z-index: 5; }
+      #fs:hover { opacity: 1; }
+      #saves { position: fixed; left: 10px; bottom: 10px; z-index: 5; opacity: .35; }
+      #saves:hover { opacity: 1; }
+      #saves button { font: 12px sans-serif; color: #ddd; background: rgba(255,255,255,.12); border: 0;
+                      border-radius: 4px; padding: 6px 8px; cursor: pointer; }
+      #clicktostart { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+                      color: #eee; font: 22px sans-serif; background: rgba(0,0,0,.6); cursor: pointer; z-index: 4; }
+    </style>
+    <script>
+      // Unity calls fullscreen/pointer-lock from its frame loop, outside the user gesture; the
+      // browser refuses and Unity shows an error dialog. Gate them (WEBPORT_GUIDE §3b).
+      window.__allowFullscreen = false;
+      ['requestFullscreen','webkitRequestFullscreen','mozRequestFullScreen','msRequestFullscreen'].forEach(function (n) {
+        var orig = Element.prototype[n];
+        if (!orig) return;
+        Element.prototype[n] = function () {
+          if (!window.__allowFullscreen) return Promise.resolve();
+          window.__allowFullscreen = false;
+          try { return orig.apply(this, arguments); } catch (e) { return Promise.resolve(); }
+        };
+      });
+      (function () {
+        var orig = Element.prototype.requestPointerLock;
+        if (!orig) return;
+        Element.prototype.requestPointerLock = function () {
+          try { var r = orig.apply(this, arguments); if (r && r.catch) r.catch(function () {}); return r; } catch (e) {}
+        };
+      })();
+      // Track every AudioContext so a user gesture can resume them (autoplay policy).
+      (function () {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        var list = window.__audioContexts = [];
+        var Wrapped = function () {
+          var c = new (Function.prototype.bind.apply(AC, [null].concat([].slice.call(arguments))))();
+          list.push(c);
+          return c;
+        };
+        Wrapped.prototype = AC.prototype;
+        window.AudioContext = Wrapped;
+        if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
+      })();
+      window.addEventListener('unhandledrejection', function (e) {
+        var m = String(e.reason && (e.reason.message || e.reason));
+        if (/fullscreen|pointer ?lock/i.test(m)) e.preventDefault();
+      });
+    </script>
+    <script>
+      console.log('%cported by @._.dasher._.', 'color:#aaa;font:14px sans-serif');
+      console.log('%chttps://wasm.rip', 'color:#7cc242;font:14px sans-serif');
+    </script>
+    <script src="Build/UnityLoader.js"></script>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="gameContainer"></div>
+      <div id="progress"><div></div></div>
+    </div>
+    <div id="credit">
+      <span>ported by @._.dasher._.</span>
+      <a href="https://wasm.rip/" target="_blank" rel="noopener">wasm.rip</a>
+    </div>
+    <button id="fs" title="Fullscreen"></button>
+    <div id="saves">
+      <button id="exp" title="Download your save files">Export saves</button>
+      <button id="imp" title="Load saves from a file (also accepts Steam SaveData*.ds files)">Import saves</button>
+      <input id="impfile" type="file" multiple accept=".json,.ds,.dsb" style="display:none">
+    </div>
+    <script>
+      function fit() {
+        var w = window.innerWidth, h = window.innerHeight, a = 16 / 9;
+        if (w / h > a) w = Math.floor(h * a); else h = Math.floor(w / a);
+        var c = document.getElementById('gameContainer');
+        c.style.width = w + 'px'; c.style.height = h + 'px';
+      }
+      window.addEventListener('resize', fit); fit();
+      function progress(inst, p) {
+        var bar = document.getElementById('progress');
+        bar.firstChild.style.width = Math.round(p * 100) + '%';
+        if (p >= 1) setTimeout(function () { bar.style.display = 'none'; }, 300);
+      }
+      var CDN = "https://cdn.jsdelivr.net/gh/dashiellbenton/ports@6953b870f9f8ac49191dec7c4293dcd8917bf00d/dudestop";
+      var SPLIT = {};
+      // The player derives streamingAssetsPath from THIS page's URL; tell the audio shim
+      // where the payload really lives (WebPort.StreamingAssetsBase reads ?cdn=).
+      (function () {
+        var u = new URL(location.href);
+        if (u.searchParams.get('cdn') !== CDN) { u.searchParams.set('cdn', CDN); history.replaceState(null, '', u.toString()); }
+      })();
+      var gameInstance = null;
+      function fetchJoined(name, n) {
+        var list = [];
+        for (var i = 0; i < n; i++) list.push(fetch(CDN + '/Build/' + name + '.part' + ('00' + i).slice(-3)).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + r.url); return r.arrayBuffer(); }));
+        return Promise.all(list).then(function (bufs) { return URL.createObjectURL(new Blob(bufs)); });
+      }
+      function start(jsonUrl) {
+        gameInstance = UnityLoader.instantiate("gameContainer", jsonUrl, {
+        onProgress: progress,
+        Module: { onRuntimeInitialized: function () {} }
+      });
+        window.unityInstance = gameInstance;
+      }
+      if (!Object.keys(SPLIT).length) {
+        start(CDN + '/Build/b11.json');
+      } else {
+        // Rewrite the build JSON so split files point at reassembled blob: URLs.
+        fetch(CDN + '/Build/b11.json').then(function (r) { return r.json(); }).then(function (cfg) {
+          var jobs = [];
+          Object.keys(cfg).forEach(function (k) {
+            var v = cfg[k];
+            if (typeof v !== 'string' || !/Url$/.test(k)) return;
+            if (SPLIT[v]) jobs.push(fetchJoined(v, SPLIT[v]).then(function (b) { cfg[k] = b; }));
+            else cfg[k] = CDN + '/Build/' + v;
+          });
+          return Promise.all(jobs).then(function () {
+            start(URL.createObjectURL(new Blob([JSON.stringify(cfg)], { type: 'application/json' })));
+          });
+        }).catch(function (e) { console.error(e); document.getElementById('progress').outerHTML = '<p style="color:#f66;font:14px sans-serif;text-align:center">Failed to load: ' + e + '</p>'; });
+      }
+      document.getElementById('fs').onclick = function () {
+        window.__allowFullscreen = true;
+        var el = document.getElementById('gameContainer');
+        (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen).call(el);
+      };
+      document.addEventListener('fullscreenchange', function () { setTimeout(fit, 50); });
+      // Save export/import. The game mirrors every save into localStorage as
+      // "dudestop-save:<file>" (base64); boot restores them, overwriting when the
+      // force flag is set. Steam saves (SaveData*.ds) are compatible: fixed DES key.
+      var PREFIX = 'dudestop-save:';
+      document.getElementById('exp').onclick = function () {
+        var out = {};
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k.indexOf(PREFIX) === 0) out[k.substring(PREFIX.length)] = localStorage.getItem(k);
+        }
+        if (!Object.keys(out).length) { alert('No saves yet.'); return; }
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+        a.download = 'dudestop-saves.json';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      };
+      document.getElementById('imp').onclick = function () { document.getElementById('impfile').click(); };
+      document.getElementById('impfile').onchange = function (e) {
+        var files = [].slice.call(e.target.files), pending = files.length, n = 0;
+        if (!pending) return;
+        files.forEach(function (f) {
+          var r = new FileReader();
+          r.onload = function () {
+            try {
+              if (/\.json$/i.test(f.name)) {
+                var obj = JSON.parse(new TextDecoder().decode(new Uint8Array(r.result)));
+                Object.keys(obj).forEach(function (k) { localStorage.setItem(PREFIX + k, obj[k]); n++; });
+              } else {
+                var bytes = new Uint8Array(r.result), bin = '';
+                for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+                localStorage.setItem(PREFIX + f.name, btoa(bin)); n++;
+              }
+            } catch (err) { alert('Could not read ' + f.name + ': ' + err); }
+            if (--pending === 0 && n) {
+              localStorage.setItem('dudestop-force-restore', '1');
+              alert('Imported ' + n + ' file(s). The game will reload.');
+              location.reload();
+            }
+          };
+          r.readAsArrayBuffer(f);
+        });
+      };
+      // WebAudio starts suspended until a user gesture; resume every context on first input.
+      function resumeAudio() {
+        (window.__audioContexts || []).forEach(function (c) {
+          try { if (c.state !== 'running') c.resume(); } catch (e) {}
+        });
+      }
+      ['pointerdown', 'keydown', 'touchstart'].forEach(function (t) { window.addEventListener(t, resumeAudio, true); });
+    </script>
+  </body>
+</html>

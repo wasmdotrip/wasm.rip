@@ -259,5 +259,12 @@
     "gameUrl": "files/TMFDS/index.html",
     "imageUrl": "img/tmfds.png",
     "porter": "dasher"
+  },
+  {
+    "id": 37,
+    "name": "Dude, Stop",
+    "gameUrl": "files/dudestop/index.html",
+    "imageUrl": "img/dudestop.webp",
+    "porter": "dasher"
   }
 ]

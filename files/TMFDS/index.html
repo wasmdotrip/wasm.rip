@@ -3,7 +3,6 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-    <base href="https://cdn.jsdelivr.net/gh/dashiellbenton/ports/tmfds/">
     <title>The Message From Deep Space</title>
     <style>
       /* black, not the Unity brown: whatever the canvas does not cover reads as a
@@ -113,24 +112,24 @@
       // list of parts that must be concatenated back together in order.
       var MANIFEST = {
   "data": {
-    "file": "b69.data.unityweb",
+    "file": "b70.data.unityweb",
     "parts": [
-      "b69.data.unityweb.part000",
-      "b69.data.unityweb.part001",
-      "b69.data.unityweb.part002"
+      "b70.data.unityweb.part000",
+      "b70.data.unityweb.part001",
+      "b70.data.unityweb.part002"
     ],
-    "bytes": 54793830
+    "bytes": 54829683
   },
   "code": {
-    "file": "b69.wasm.unityweb",
-    "bytes": 8237172
+    "file": "b70.wasm.unityweb",
+    "bytes": 8353010
   },
   "framework": {
-    "file": "b69.framework.js.unityweb",
-    "bytes": 80888
+    "file": "b70.framework.js.unityweb",
+    "bytes": 81016
   },
   "loader": {
-    "file": "b69.loader.js",
+    "file": "b70.loader.js",
     "bytes": 117365
   }
 };
@@ -139,7 +138,7 @@
       // this page; this stamps the same root onto our own URL so the C# level streamer
       // (which resolves bundle URLs against Application.absoluteURL, ignoring <base>)
       // fetches LevelBundles from the CDN too instead of from wherever the page is hosted.
-      var CDN_BASE = "https://cdn.jsdelivr.net/gh/dashiellbenton/ports/tmfds";
+      var CDN_BASE = "";
       if (CDN_BASE) {
         var u = new URL(window.location.href);
         if (u.searchParams.get("cdn") !== CDN_BASE) {
