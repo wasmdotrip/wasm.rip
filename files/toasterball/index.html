@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <base href="https://cdn.jsdelivr.net/gh/dashiellbenton/ports@5e78364d5bba78d6b7c43fbd890663ff621702f3/toasterball/">
+    <title>Toasterball</title>
+    <style>
+      /* black, not the Unity brown: whatever the canvas does not cover reads as a
+         letterbox bar rather than a strip of a different colour hanging off the bottom */
+      html, body { margin: 0; padding: 0; background: #000; height: 100%;
+                   overflow: hidden; }
+      /* a 26px strip under the canvas holds the credit and the fullscreen button, so neither
+         covers the game's own corner hints (CONFIRM, version, WASD, score) */
+      #wrap { display: flex; flex-direction: column; align-items: center;
+              justify-content: center; height: calc(100% - 26px); background: #000; }
+      #unity-canvas { background: #000; outline: none; display: block; }
+      #bar { width: 320px; height: 12px; margin-top: 14px; border: 1px solid #555;
+             display: none; }
+      #barfill { width: 0%; height: 100%; background: #7cc242; }
+      #msg { color: #bbb; font: 13px/1.5 system-ui, sans-serif; margin-top: 10px;
+             text-align: center; }
+      #credit { position: fixed; right: 10px; bottom: 5px; z-index: 10;
+                color: #8a8a8a; font: 12px/16px system-ui, sans-serif;
+                text-align: right; pointer-events: auto; white-space: nowrap; }
+      #credit a { color: #7cc242; text-decoration: none; }
+      #credit a:hover { text-decoration: underline; }
+      #fs { position: fixed; left: 10px; bottom: 3px; z-index: 10; display: none;
+            background: rgba(255,255,255,0.08); color: #ddd; border: 1px solid #555;
+            border-radius: 4px; padding: 3px 10px; cursor: pointer;
+            font: 12px/1 system-ui, sans-serif; }
+      #fs:hover { background: rgba(255,255,255,0.18); }
+    </style>
+    <script>
+      // Stop Unity taking the page fullscreen on its own, and stop the refusal showing up
+      // as a crash dialog.
+      //
+      // Unity queues a fullscreen request in its deferred-call list and fires it from a key
+      // handler -- Ctrl and Alt both do it, and so does locking the pointer. By then the
+      // user gesture that opened the queue has ended, so the browser refuses:
+      //     TypeError: Fullscreen request denied
+      //       JSEvents_requestFullscreen <- runDeferredCalls <- jsEventHandler
+      // Unity attaches no catch, so it surfaces as an uncaught error.
+      //
+      // The build's own index.html has had this guard for a while; this standalone page is
+      // generated separately and did not, which is why pressing Ctrl on the hosted copy
+      // still produced the dialog.
+      (function () {
+        window.__webportAllowFullscreen = false;
+        var proto = Element.prototype;
+        ['requestFullscreen', 'webkitRequestFullscreen',
+         'mozRequestFullScreen', 'msRequestFullscreen'].forEach(function (name) {
+          var original = proto[name];
+          if (!original) { return; }
+          proto[name] = function () {
+            if (!window.__webportAllowFullscreen) {
+              // Resolve rather than reject: Unity does not handle a rejection here, and an
+              // unhandled one is exactly the dialog being avoided.
+              return Promise.resolve();
+            }
+            window.__webportAllowFullscreen = false;
+            try { return original.apply(this, arguments); }
+            catch (e) { return Promise.resolve(); }
+          };
+        });
+
+        // Same story for pointer lock: requested from the frame loop, refused, and logged
+        // as an uncaught rejection on every click. Retry on the next real gesture.
+        var lockOriginal = proto.requestPointerLock;
+        if (lockOriginal && !proto.__webportPointerLockWrapped) {
+          proto.__webportPointerLockWrapped = true;
+          proto.requestPointerLock = function () {
+            var el = this, r;
+            try { r = lockOriginal.apply(el, arguments); } catch (e) { r = null; }
+            if (r && typeof r.catch === 'function') {
+              return r.catch(function () {
+                var retry = function () {
+                  window.removeEventListener('pointerdown', retry, true);
+                  try { lockOriginal.call(el); } catch (e2) {}
+                };
+                window.addEventListener('pointerdown', retry, true);
+              });
+            }
+            return r;
+          };
+        }
+      })();
+
+      // Second line of defence, in case anything still throws it.
+      window.addEventListener('error', function (e) {
+        if (e && e.message && e.message.indexOf('Fullscreen request denied') >= 0) {
+          e.stopImmediatePropagation(); e.preventDefault(); return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var m = e && e.reason && (e.reason.message || String(e.reason));
+        if (m && m.indexOf('Fullscreen request denied') >= 0) { e.preventDefault(); }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="wrap">
+      <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+      <div id="bar"><div id="barfill"></div></div>
+      <div id="msg">Loading…</div>
+    </div>
+    <button id="fs" type="button">Fullscreen</button>
+    <div id="credit">
+      ported by @._.dasher._. &middot;
+      <a href="https://wasm.rip" target="_blank" rel="noopener">wasm.rip</a>
+    </div>
+    <script>
+      // Manifest written by make_cdn_bundle.py. Each entry is either a plain file or a
+      // list of parts that must be concatenated back together in order.
+      var MANIFEST = {
+  "data": {
+    "file": "b15.data.unityweb",
+    "parts": [
+      "b15.data.unityweb.part000",
+      "b15.data.unityweb.part001",
+      "b15.data.unityweb.part002",
+      "b15.data.unityweb.part003",
+      "b15.data.unityweb.part004",
+      "b15.data.unityweb.part005",
+      "b15.data.unityweb.part006",
+      "b15.data.unityweb.part007",
+      "b15.data.unityweb.part008",
+      "b15.data.unityweb.part009"
+    ],
+    "bytes": 172488986
+  },
+  "code": {
+    "file": "b15.wasm.unityweb",
+    "bytes": 8893880
+  },
+  "framework": {
+    "file": "b15.framework.js.unityweb",
+    "bytes": 73966
+  },
+  "loader": {
+    "file": "b15.loader.js",
+    "bytes": 106776
+  }
+};
+      var BUILD = "Build";
+      // Empty for a same-origin build. When set, <base> already redirects the fetches on
+      // this page; this stamps the same root onto our own URL so the C# level streamer
+      // (which resolves bundle URLs against Application.absoluteURL, ignoring <base>)
+      // fetches LevelBundles from the CDN too instead of from wherever the page is hosted.
+      var CDN_BASE = "https://cdn.jsdelivr.net/gh/dashiellbenton/ports@5e78364d5bba78d6b7c43fbd890663ff621702f3/toasterball";
+      if (CDN_BASE) {
+        var u = new URL(window.location.href);
+        if (u.searchParams.get("cdn") !== CDN_BASE) {
+          u.searchParams.set("cdn", CDN_BASE);
+          history.replaceState(null, "", u.toString());
+        }
+      }
+
+      // Cache Storage key. Unity's own dataCaching only works when it fetches the URL
+      // itself; here the loader is handed a blob: URL, so Unity caches nothing and every
+      // refresh would re-download the whole payload. We therefore cache the raw parts
+      // ourselves, keyed on the release tag so a new release invalidates the old copy.
+      var CACHE_KEY = "toasterball-dashiellbenton-ports-b15";
+      // Second host for every payload file, used when the CDN keeps failing one.
+      var MIRROR = "https://dashiellbenton.github.io/ports/toasterball";
+
+      var canvas  = document.querySelector("#unity-canvas");
+      var bar     = document.querySelector("#bar");
+      var barfill = document.querySelector("#barfill");
+      var msg     = document.querySelector("#msg");
+
+      function setMsg(t) { msg.textContent = t; }
+
+      // Letterbox the canvas to 16:9 inside the window.
+      function layout() {
+        var w = window.innerWidth, h = window.innerHeight - 26;
+        var cw = w, ch = Math.round(w * 9 / 16);
+        if (ch > h) { ch = h; cw = Math.round(h * 16 / 9); }
+        canvas.style.width = cw + "px";
+        canvas.style.height = ch + "px";
+      }
+      window.addEventListener("resize", layout);
+      layout();
+      // Keyboard focus follows the canvas so key presses reach the game.
+      canvas.addEventListener("pointerdown", function () { canvas.focus(); });
+
+      // Browsers keep audio suspended until a gesture; resume every context on input.
+      (function () {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        var all = [];
+        var Wrapped = function () { var c = new Ctx(...arguments); all.push(c); return c; };
+        Wrapped.prototype = Ctx.prototype;
+        window.AudioContext = Wrapped;
+        if (window.webkitAudioContext) window.webkitAudioContext = Wrapped;
+        function resume() { all.forEach(function (c) { if (c.state === "suspended") c.resume().catch(function () {}); }); }
+        ["pointerdown", "keydown", "touchstart"].forEach(function (ev) { document.addEventListener(ev, resume, true); });
+      })();
+      function mb(bytes) { return (bytes / 1048576).toFixed(1); }
+
+      // Total download size, measured at package time — no HEAD requests needed, and it
+      // stays correct even if the CDN omits Content-Length on a streamed response.
+      var TOTAL = MANIFEST.data.bytes + MANIFEST.framework.bytes + MANIFEST.code.bytes;
+      var downloaded = 0;
+
+      function report(label, fromCache) {
+        bar.style.display = "block";
+        var pct = TOTAL ? downloaded / TOTAL : 0;
+        barfill.style.width = (pct * 100).toFixed(1) + "%";
+        setMsg((fromCache ? "Loading cached " : "Downloading ") + label + "… " +
+               mb(downloaded) + " / " + mb(TOTAL) +
+               " MB (" + Math.floor(pct * 100) + "%)");
+      }
+
+      // Open the part cache and evict every older release's cache. Cache Storage needs a
+      // secure context (https, or localhost) — on plain http:// it is simply absent, so
+      // every call is guarded and a failure degrades to "download every time", never to a
+      // broken page.
+      var cachePromise = (async function () {
+        try {
+          if (!window.caches) return null;
+          var names = await caches.keys();
+          for (var i = 0; i < names.length; i++) {
+            if (names[i].indexOf("toasterball-") === 0 && names[i] !== CACHE_KEY) {
+              await caches.delete(names[i]);
+            }
+          }
+          return await caches.open(CACHE_KEY);
+        } catch (e) {
+          return null;
+        }
+      })();
+
+      // Fetch every part and glue them into one Blob, then expose it as a blob: URL.
+      // Unity's loader treats it like any other URL, so splitting stays invisible to it.
+      // The body is read through a stream reader so the byte counter moves continuously
+      // instead of jumping once per completed part.
+      async function assembleOnce(entry, label, useCache) {
+        var urls = entry.parts || [entry.file];
+        var cache = useCache ? await cachePromise : null;
+        var buffers = [];
+        for (var i = 0; i < urls.length; i++) {
+          var url = BUILD + "/" + urls[i];
+          var res = null;
+          var fromCache = false;
+          if (cache) {
+            try {
+              res = await cache.match(url);
+              fromCache = !!res;
+            } catch (e) { res = null; }
+          }
+          if (!res) {
+            // Retry, and VALIDATE before trusting the response.
+            //
+            // A CDN can answer a perfectly good URL with an error page -- jsDelivr returns
+            // "Package size exceeded the configured limit of 50 MB" as a text/plain body
+            // while it is still resolving a package. Treating any 2xx as the payload meant
+            // that error text was concatenated into the Blob and handed to Unity, which
+            // then died inside the loader with an unreadable TypeError about 'in' and an
+            // undefined object.
+            //
+            // Worse, the old code cached the response BEFORE checking it, so one bad
+            // moment was written into Cache Storage and replayed on every later visit --
+            // a transient outage turned into a permanent one for that visitor.
+            var lastErr = null;
+            // jsDelivr fails cold fetches now and then ("Failed to fetch the requested
+            // commit" 404, or a 503) and keeps answering that for minutes. After the
+            // retries, fall back to the same file on the mirror (GitHub Pages, CORS *).
+            var sources = [url];
+            if (MIRROR) sources.push(MIRROR + "/" + BUILD + "/" + urls[i]);
+            for (var attempt = 0; attempt < 4 * sources.length; attempt++) {
+              var src = sources[Math.floor(attempt / 4)];
+              if (attempt) {
+                setMsg(label + ": retrying (" + attempt + ")…");
+                await new Promise(function (r) { setTimeout(r, 400 * Math.pow(2, attempt)); });
+              }
+              try {
+                var candidate = await fetch(src, { cache: "no-store" });
+                if (!candidate.ok) {
+                  lastErr = new Error(src + " returned " + candidate.status);
+                  continue;
+                }
+                // Deliberately NOT sniffing content-type here. Hosts disagree about these
+                // files -- a dev server calls b70.framework.js.unityweb "text/javascript",
+                // jsDelivr calls it "application/vnd.unity" -- so a type check rejects good
+                // payloads. The byte-count check after assembly is the authoritative one and
+                // catches an error page anyway, since those are a few dozen bytes against an
+                // expected few dozen megabytes.
+                res = candidate;
+                break;
+              } catch (e) {
+                lastErr = e;
+              }
+            }
+            if (!res) throw lastErr || new Error("failed to fetch " + url);
+            // Only now is it worth keeping. Store a clone before the body is consumed.
+            if (cache) {
+              try { await cache.put(url, res.clone()); } catch (e) { /* quota/opaque */ }
+            }
+          }
+          if (res.body && res.body.getReader) {
+            var reader = res.body.getReader();
+            while (true) {
+              var step = await reader.read();
+              if (step.done) break;
+              buffers.push(step.value);
+              downloaded += step.value.byteLength;
+              report(label, fromCache);
+            }
+          } else {
+            // no streaming support: fall back to whole-part reads
+            var buf = await res.arrayBuffer();
+            buffers.push(buf);
+            downloaded += buf.byteLength;
+            report(label, fromCache);
+          }
+        }
+        var blob = new Blob(buffers);
+        // The manifest records the exact byte count the build produced. Checking it is what
+        // turns "Unity died somewhere inside its loader" into a named, actionable failure --
+        // and it is the only way to notice that a CACHED copy is wrong, since a cache hit
+        // never goes near the validation above.
+        // A LOWER bound, not equality. entry.bytes is the size on disk, and these files are
+        // brotli-compressed: a host that sends Content-Encoding: br has the browser inflate
+        // the body, so the blob legitimately comes back LARGER than the file. Served raw it
+        // matches exactly. Either way it is never smaller -- so anything short is a truncated
+        // download or a CDN error page (a few dozen bytes against a few dozen megabytes),
+        // which is exactly the case that used to reach Unity and die as an opaque TypeError.
+        if (entry.bytes && blob.size < entry.bytes) {
+          throw Object.assign(
+            new Error(label + " is only " + blob.size + " bytes, expected at least "
+              + entry.bytes + " (truncated download or CDN error page)"),
+            { badPayload: true, urls: urls });
+        }
+        return URL.createObjectURL(blob);
+      }
+
+      async function assemble(entry, label) {
+        try {
+          return await assembleOnce(entry, label, true);
+        } catch (e) {
+          // Drop whatever is cached for this entry and try once more straight from the
+          // network. Without this, one bad response written into Cache Storage makes a
+          // momentary CDN failure permanent for that visitor on every future visit.
+          setMsg(label + ": cached copy looks wrong, re-downloading…");
+          try {
+            var cache = await cachePromise;
+            if (cache) {
+              var urls = entry.parts || [entry.file];
+              for (var i = 0; i < urls.length; i++) {
+                try { await cache.delete(BUILD + "/" + urls[i]); } catch (err) {}
+              }
+            }
+          } catch (err) {}
+          downloaded = 0;
+          return await assembleOnce(entry, label, false);
+        }
+      }
+
+      (async function () {
+        try {
+          var dataUrl      = await assemble(MANIFEST.data, "game data");
+          var frameworkUrl = await assemble(MANIFEST.framework, "framework");
+          var codeUrl      = await assemble(MANIFEST.code, "code");
+
+          setMsg("Starting…");
+          var script = document.createElement("script");
+          script.src = BUILD + "/" + MANIFEST.loader.file;
+          script.onload = function () {
+            if (typeof createUnityInstance !== "function") {
+              setMsg("The loader at " + script.src + " did not define createUnityInstance "
+                + "(the CDN probably served an error page). Reload to try again.");
+              return;
+            }
+            createUnityInstance(canvas, {
+              dataUrl: dataUrl,
+              frameworkUrl: frameworkUrl,
+              codeUrl: codeUrl,
+              streamingAssetsUrl: CDN_BASE ? CDN_BASE + "/StreamingAssets" : "StreamingAssets",
+              companyName: "Les Crafteurs",
+              productName: "Toasterball",
+              productVersion: "2.1.2",
+            }, function (p) {
+              bar.style.display = "block";
+              barfill.style.width = Math.round(p * 100) + "%";
+              setMsg("Loading… " + Math.round(p * 100) + "%");
+            }).then(function (instance) {
+              window.unityInstance = instance;
+              window.toasterReady = true;
+              bar.style.display = "none";
+              setMsg("");
+              msg.style.display = "none";
+              canvas.focus();
+              // Unity's own SetFullscreen keeps the canvas sized to the screen; the
+              // Fullscreen API on the element alone leaves the render target unchanged.
+              var fs = document.querySelector("#fs");
+              fs.style.display = "block";
+              fs.onclick = function () {
+                // Lift the gate for exactly this call: a click IS a live user gesture, so
+                // the browser will honour the request.
+                window.__webportAllowFullscreen = true;
+                if (instance.SetFullscreen) instance.SetFullscreen(1);
+                else if (canvas.requestFullscreen) canvas.requestFullscreen();
+                window.__webportAllowFullscreen = false;
+                canvas.focus();
+              };
+            }).catch(function (e) {
+              setMsg("Failed to start: " + e);
+            });
+          };
+          script.onerror = function () { setMsg("Failed to load " + script.src); };
+          document.body.appendChild(script);
+        } catch (e) {
+          setMsg("Could not load the game: " + (e && e.message ? e.message : e)
+            + " — reload to try again.");
+          if (window.console) console.error("[WebPort] load failed", e);
+        }
+      })();
+    </script>
+  </body>
+</html>

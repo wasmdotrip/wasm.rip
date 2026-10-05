@@ -281,5 +281,12 @@
     "gameUrl": "files/hcr/index.html",
     "imageUrl": "img/hcr.png",
     "porter": "NotRexed"
+  },
+  {
+    "id": 40,
+    "name": "Toasterball",
+    "gameUrl": "files/toasterball/index.html",
+    "imageUrl": "img/toasterball.png",
+    "porter": "dasher"
   }
 ]
