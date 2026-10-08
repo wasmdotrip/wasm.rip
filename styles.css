@@ -273,12 +273,23 @@ footer a:hover {
   list-style: none;
 }
 .chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 42px;
   background: #111;
   border: 1px solid #333;
   border-radius: 5px;
-  padding: 6px 14px;
+  padding: 0 16px;
   font-size: 16px;
   color: #ccc;
+}
+.chips svg {
+  width: auto;
+  fill: currentColor;
+}
+.chips .cut {
+  fill: #111;
 }
 .group-memb a {
   text-decoration: none;
@@ -324,4 +335,7 @@ footer a:hover {
 }
 [hidden] {
   display: none !important;
+}
+.chips + .about-text {
+  margin-top: 16px;
 }

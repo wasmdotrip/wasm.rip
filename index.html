@@ -19,9 +19,9 @@
       <div class="container">
         <span>wasm.rip</span>
         <div class="links">
+          <a href="#people">people</a>
           <a href="#ports">ports</a>
           <a href="#engines">what we port</a>
-          <a href="#people">people</a>
           <a href="#about">about</a>
           <a href="https://discord.gg/uubyGYPHQw" target="_blank" rel="noopener">discord</a>
         </div>
@@ -37,6 +37,14 @@
           rebuilt to run in a browser. click one and the game starts in that
           tab. the big ones take a minute to download the first time.
         </p>
+
+        <section class="group-section" id="people">
+          <div class="section-header">
+            <h2>people</h2>
+            <span class="count">click a port count to filter</span>
+          </div>
+          <div class="group-grid" id="people-list"></div>
+        </section>
 
         <section class="group-section" id="ports">
           <div class="section-header">
@@ -72,35 +80,27 @@
           </p>
           <h3>engines</h3>
           <ul class="chips">
-            <li>unreal engine</li>
-            <li>unity</li>
-            <li>gamemaker</li>
-            <li>godot</li>
-            <li>monogame</li>
-            <li>xna</li>
-            <li>löve</li>
-            <li>cocos2d</li>
-            <li>custom engines</li>
+            <li class="chip" role="img" aria-label="unreal engine"><svg viewBox="0 0 364 51" style="height:24px" aria-hidden="true"><use href="img/logos.svg#l0"/></svg></li>
+            <li class="chip" role="img" aria-label="unity"><svg viewBox="0 0 129 45.56" style="height:24px" aria-hidden="true"><use href="img/logos.svg#l1"/></svg></li>
+            <li class="chip" role="img" aria-label="gamemaker"><svg viewBox="0 0 501 115.92" style="height:26px" aria-hidden="true"><use href="img/logos.svg#l2"/></svg></li>
+            <li class="chip" role="img" aria-label="godot"><svg viewBox="0 0 513 175.92" style="height:28px" aria-hidden="true"><use href="img/logos.svg#l3"/></svg></li>
+            <li class="chip" role="img" aria-label="monogame"><svg viewBox="0 0 129 27.94" style="height:21px" aria-hidden="true"><use href="img/logos.svg#l4"/></svg></li>
+            <li class="chip" role="img" aria-label="xna"><svg viewBox="0 0 1196 471" style="height:19px" aria-hidden="true"><use href="img/logos.svg#l5"/></svg></li>
+            <li class="chip" aria-label="löve"><svg viewBox="0 0 138.98 140.06" style="height:22px" aria-hidden="true"><use href="img/logos.svg#l6"/></svg><span aria-hidden="true">LÖVE</span></li>
+            <li class="chip" role="img" aria-label="cocos2d"><svg viewBox="0 0 41.03 9.5" style="height:17px" aria-hidden="true"><use href="img/logos.svg#l7"/></svg></li>
+            <li class="chip">custom engines</li>
           </ul>
           <h3>platforms</h3>
           <ul class="chips">
-            <li>pc (windows)</li>
-            <li>wii</li>
-            <li>wii u</li>
-            <li>xbox 360</li>
-            <li>retro</li>
-            <li>android</li>
-            <li>ios</li>
+            <li class="chip" role="img" aria-label="pc (windows)"><svg viewBox="0 0 513 109.18" style="height:21px" aria-hidden="true"><use href="img/logos.svg#l8"/></svg></li>
+            <li class="chip" role="img" aria-label="wii"><svg style="height:15px" viewBox="0 0 24.80 12.28" aria-hidden="true"><use href="img/logos.svg#l9"/></svg></li>
+            <li class="chip" role="img" aria-label="wii u"><svg style="height:15px" viewBox="0 0 24.80 7.94" aria-hidden="true"><use href="img/logos.svg#l10"/></svg></li>
+            <li class="chip" role="img" aria-label="xbox 360"><svg viewBox="0 0 400.29 82" style="height:19px" aria-hidden="true"><use href="img/logos.svg#l11"/></svg></li>
+            <li class="chip">retro</li>
+            <li class="chip" role="img" aria-label="android"><svg viewBox="0 0 513 82.2" style="height:15px" aria-hidden="true"><use href="img/logos.svg#l12"/></svg></li>
+            <li class="chip" role="img" aria-label="ios"><svg viewBox="0 0 25 12.9" style="height:16px" aria-hidden="true"><use href="img/logos.svg#l13"/></svg></li>
           </ul>
           <p class="about-text">we handle x86, x64 and arm builds, on pc and on mobile.</p>
-        </section>
-
-        <section class="group-section" id="people">
-          <div class="section-header">
-            <h2>people</h2>
-            <span class="count">click a port count to filter</span>
-          </div>
-          <div class="group-grid" id="people-list"></div>
         </section>
 
         <section class="group-section" id="about">
