@@ -169,7 +169,6 @@ Promise.all([
   .then(([g, m]) => {
     games = g.map((game, i) => ({ ...game, _order: i }));
     members = m;
-    document.querySelector("#more-count").textContent = Math.max(0, games.length - 2);
     render();
     renderPeople();
   })
