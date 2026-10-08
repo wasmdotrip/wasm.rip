@@ -201,3 +201,127 @@ footer a:hover {
 .show-all-btn:hover {
   background-color: #3d3d3d;
 }
+.lede {
+  font-size: 19px;
+  color: #aaa;
+  max-width: 750px;
+  line-height: 1.6;
+  margin-bottom: 60px;
+}
+.count {
+  color: #777;
+  font-size: 16px;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.toolbar input,
+.toolbar select {
+  background: #111;
+  color: #e5e5e5;
+  border: 1px solid #575757;
+  border-radius: 5px;
+  padding: 10px 14px;
+  font-size: 16px;
+}
+.toolbar input {
+  flex: 1 1 260px;
+}
+.tabs {
+  display: flex;
+  gap: 10px;
+}
+.tabs .show-all-btn {
+  margin: 0;
+}
+.tab[aria-pressed="true"] {
+  background-color: #3d3d3d;
+}
+.porter-chip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  color: #aaa;
+  margin-bottom: 20px;
+}
+.porter-chip .show-all-btn {
+  margin: 0;
+  padding: 4px 12px;
+}
+.empty {
+  margin-top: 20px;
+}
+.empty a,
+.about-text a,
+.faq a {
+  color: #ccc;
+}
+.group-section h3 {
+  font-size: 19px;
+  color: #aaa;
+  margin: 24px 0 12px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  list-style: none;
+}
+.chips li {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 5px;
+  padding: 6px 14px;
+  font-size: 16px;
+  color: #ccc;
+}
+.group-memb a {
+  text-decoration: none;
+  color: #aaa;
+}
+.group-memb a:hover span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.person-ports {
+  background: none;
+  border: none;
+  color: #777;
+  font-size: 14px;
+  cursor: pointer;
+}
+.person-ports:not(:disabled):hover {
+  color: #fff;
+  text-decoration: underline;
+}
+.person-ports:disabled {
+  cursor: default;
+}
+.faq {
+  margin-top: 30px;
+  max-width: 750px;
+}
+.faq div {
+  margin-bottom: 20px;
+}
+.faq dt {
+  font-size: 19px;
+  color: #e5e5e5;
+}
+.faq dd {
+  font-size: 17px;
+  color: #aaa;
+}
+.faq code {
+  background: #111;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+[hidden] {
+  display: none !important;
+}

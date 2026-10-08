@@ -6,6 +6,10 @@
     <title>wasm.rip</title>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="browser ports of pc games like cuphead and stardew valley, made by a group of people on the internet." />
+    <meta name="theme-color" content="#0d0d0d" />
+    <meta property="og:title" content="wasm.rip" />
+    <meta property="og:description" content="pc games like cuphead and stardew valley, ported to run in a browser tab." />
     <link rel="icon" type="image/x-icon" href="favicon.ico" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -15,9 +19,11 @@
       <div class="container">
         <span>wasm.rip</span>
         <div class="links">
-          <a href="#members">members</a>
-          <a href="#featured">ports</a>
+          <a href="#ports">ports</a>
+          <a href="#engines">what we port</a>
+          <a href="#people">people</a>
           <a href="#about">about</a>
+          <a href="https://discord.gg/uubyGYPHQw" target="_blank" rel="noopener">discord</a>
         </div>
       </div>
     </nav>
@@ -25,172 +31,110 @@
     <main>
       <div class="container">
         <h1>wasm.rip</h1>
-       <section class="group-section" id="members">
-  <h2>members</h2>
-  <div class="group-grid">
+        <p class="tagline">we port games to the web.</p>
+        <p class="lede">
+          cuphead, stardew valley and <span id="more-count">35</span> more,
+          rebuilt to run in a browser. click one and the game starts in that
+          tab. the big ones take a minute to download the first time.
+        </p>
 
-    
-    <a class="group-memb" href="https://github.com/shayderrr" target="_blank">
-      <img src="https://github.com/shayderrr.png" />
-      <span>shayder</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/woahhcrackers" target="_blank">
-      <img src="https://github.com/woahhcrackers.png" />
-      <span>crackers</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/cirsius" target="_blank">
-      <img src="https://github.com/cirsius.png" />
-      <span>cirsius</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/NotRexed" target="_blank">
-      <img src="img/rexed.webp" />
-      <span>NotRexed</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/q8j-dev" target="_blank">
-      <img src="https://github.com/q8j-dev.png" />
-      <span>q8j.</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/SomeRandomFella" target="_blank">
-      <img src="img/plank.webp" />
-      <span>sexyplankton</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/a1pl" target="_blank">
-      <img src="img/sansuke.png" />
-      <span>sunsuke</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/gurtmuncher" target="_blank">
-      <img src="https://github.com/gurtmuncher.png" />
-      <span>gurtmuncher</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/reeyuki" target="_blank">
-      <img src="img/reeyuki.png" />
-      <span>reeyuki</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/slqntdevss" target="_blank">
-      <img src="img/slqntimage.png" />
-      <span>slqnt</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/zx8s" target="_blank">
-      <img src="https://avatars.githubusercontent.com/u/214947125?v=4" />
-      <span>zxs</span>
-    </a>
-
-    <a class="group-memb" href="https://github.com/dashiellbenton" target="_blank">
-      <img src="img/dasherimg.png" />
-      <span>dasher</span>
-    </a>
-    
-    <a class="group-memb" href="https://github.com/mynamescrax" target="_blank">
-      <img src="https://github.com/mynamescrax.png" />
-      <span>crax</span>
-    </a>
-   <a class="group-memb" href="https://github.com/x8rr" target="_blank">
-      <img src="https://avatars.githubusercontent.com/u/266275506?s=400&u=7f2a9b2b9d6fa1d0bd30619ad34a92703f430012&v=4" />
-      <span>TS (plz dont @)</span>
-    </a>
-    <a class="group-memb" href="https://github.com/x8rr" target="_blank">
-      <img src="https://avatars.githubusercontent.com/u/159058655?v=4" />
-      <span>x8r</span>
-    </a>
-  </div>
-</section>
-        <section class="group-section" id="featured">
+        <section class="group-section" id="ports">
           <div class="section-header">
-            <h2>featured ports</h2>
-            <button class="show-all-btn" id="toggle-all-ports">show all ports</button>
+            <h2>ports</h2>
+            <span class="count" id="ports-count"></span>
           </div>
-          <div class="game-grid featured-grid"></div>
+          <div class="toolbar">
+            <input id="q" type="search" placeholder="search by game or porter (press /)" aria-label="search ports" autocomplete="off" spellcheck="false" />
+            <div class="tabs">
+              <button type="button" class="show-all-btn tab" data-filter="all" aria-pressed="true">all</button>
+              <button type="button" class="show-all-btn tab" data-filter="featured" aria-pressed="false">featured</button>
+            </div>
+            <select id="sort" aria-label="sort ports">
+              <option value="featured">featured first</option>
+              <option value="new">newest</option>
+              <option value="az">name</option>
+            </select>
+          </div>
+          <p class="porter-chip" id="porter-chip" hidden>
+            showing ports by <strong id="porter-name"></strong>
+            <button type="button" class="show-all-btn" id="porter-clear">clear</button>
+          </p>
+          <div class="game-grid" id="grid"></div>
+          <p class="empty about-text" id="empty" hidden></p>
+        </section>
+
+        <section class="group-section" id="engines">
+          <h2>what we port</h2>
+          <p class="about-text">
+            we can port games made with these engines, or for these platforms.
+            if there's a game you want, ask in the
+            <a href="https://discord.gg/uubyGYPHQw" target="_blank" rel="noopener">discord</a>.
+          </p>
+          <h3>engines</h3>
+          <ul class="chips">
+            <li>unreal engine</li>
+            <li>unity</li>
+            <li>gamemaker</li>
+            <li>godot</li>
+            <li>monogame</li>
+            <li>xna</li>
+            <li>löve</li>
+            <li>cocos2d</li>
+            <li>custom engines</li>
+          </ul>
+          <h3>platforms</h3>
+          <ul class="chips">
+            <li>pc (windows)</li>
+            <li>wii</li>
+            <li>wii u</li>
+            <li>xbox 360</li>
+            <li>retro</li>
+            <li>android</li>
+            <li>ios</li>
+          </ul>
+          <p class="about-text">we handle x86, x64 and arm builds, on pc and on mobile.</p>
+        </section>
+
+        <section class="group-section" id="people">
+          <div class="section-header">
+            <h2>people</h2>
+            <span class="count">click a port count to filter</span>
+          </div>
+          <div class="group-grid" id="people-list"></div>
         </section>
 
         <section class="group-section" id="about">
-          <h2>about us</h2>
+          <h2>about</h2>
           <p class="about-text">
             a group of people on the internet, porting games, emulators, or
-            tools
+            tools. everything on this page is something one of us got running in
+            a browser.
           </p>
+          <dl class="faq">
+            <div>
+              <dt>a port is broken</dt>
+              <dd>tell us in the <a href="https://discord.gg/uubyGYPHQw" target="_blank" rel="noopener">discord</a>, and say which browser and device you're on.</dd>
+            </div>
+            <div>
+              <dt>it's slow</dt>
+              <dd>the first load downloads the whole game, so the big ones take a while. if it still stutters once it's running, try chrome or edge.</dd>
+            </div>
+            <div>
+              <dt>how do i port</dt>
+              <dd>join our <a href="https://discord.gg/uubyGYPHQw" target="_blank" rel="noopener">discord server</a>.</dd>
+            </div>
+            <div>
+              <dt>i made a port</dt>
+              <dd>come say hi in the discord. if you're in the group, add it to <code>games.json</code> on <a href="https://github.com/wasmdotrip" target="_blank" rel="noopener">github</a>.</dd>
+            </div>
+          </dl>
         </section>
       </div>
     </main>
 
+    <script src="site.js"></script>
 
-
-    <script>
-      const featuredHolder = document.querySelector(".featured-grid");
-      const toggleBtn = document.querySelector("#toggle-all-ports");
-
-      fetch("games.json")
-        .then((res) => res.json())
-        .then((games) => {
-          const byName = (a, b) =>
-            a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-
-          const featured = games.filter((g) => g.featured).sort(byName);
-          const rest = games.filter((g) => !g.featured).sort(byName);
-          const sorted = [...featured, ...rest];
-
-          let showingAll = false;
-
-          // the urge to just use innerhtml instead of ts
-
-          const renderInto = (holder, list) => {
-            holder.innerHTML = "";
-            list.forEach((game) => {
-              const gameThing = document.createElement("div");
-              gameThing.classList.add("game-card");
-
-              const gameImage = document.createElement("img");
-              gameImage.src = game.imageUrl;
-
-              const gameInfo = document.createElement("div");
-              gameInfo.classList.add("game-info");
-
-              const gameTitle = document.createElement("span");
-              gameTitle.classList.add("game-title");
-              gameTitle.textContent = game.name;
-
-              const gamePorter = document.createElement("span");
-              gamePorter.classList.add("game-desc"); // not rlly a desc but wtv(sexyplankton) -- maybe add one later? todolist prob ( shayder )
-              gamePorter.textContent = `port by ${game.porter}`;
-
-              gameInfo.appendChild(gameTitle);
-              gameInfo.appendChild(gamePorter);
-              gameThing.appendChild(gameImage);
-              gameThing.appendChild(gameInfo);
-
-              gameThing.addEventListener("click", () => {
-                window.open(game.gameUrl, "_blank");
-              });
-
-              holder.appendChild(gameThing);
-            });
-          };
-
-          renderInto(featuredHolder, featured);
-
-          toggleBtn.addEventListener("click", () => {
-            showingAll = !showingAll;
-            renderInto(featuredHolder, showingAll ? sorted : featured);
-            toggleBtn.textContent = showingAll ? "show featured" : "show all ports";
-            document.querySelector("#featured h2").textContent = showingAll ? "all ports" : "featured ports";
-          });
-        })
-        .catch(() => {
-          alert("hi, games failed to load, either someone fucked something up or idk");
-        });
-    
-    </script>
-
-    <footer>
+<footer>
       <div class="container">
         <a href="https://github.com/wasmdotrip">github</a> |
         <a href="https://discord.gg/uubyGYPHQw">discord</a>
