@@ -7,7 +7,7 @@ const tabs = document.querySelectorAll(".tab");
 const chip = document.querySelector("#porter-chip");
 const chipName = document.querySelector("#porter-name");
 const peopleList = document.querySelector("#people-list");
-const state = { q: "", filter: "all", sort: "featured", porter: null };
+const state = { q: "", filter: "featured", sort: "featured", porter: null };
 
 const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const splitPorters = (porter) =>
