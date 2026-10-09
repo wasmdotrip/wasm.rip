@@ -288,5 +288,19 @@
     "gameUrl": "files/toasterball/index.html",
     "imageUrl": "img/toasterball.png",
     "porter": "dasher"
+  },
+  {
+    "id": 41,
+    "name": "Superflight",
+    "gameUrl": "files/superflight/index.html",
+    "imageUrl": "img/superflight.png",
+    "porter": "zay"
+  },
+  {
+    "id": 42,
+    "name": "Keep Talking And Nobody Explodes",
+    "gameUrl": "files/ktane/index.html",
+    "imageUrl": "img/ktane.png",
+    "porter": "zay"
   }
 ]
