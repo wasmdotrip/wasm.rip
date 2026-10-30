@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<base href="https://cdn.jsdelivr.net/gh/dashiellbenton/ports-data@ccf4cc894bb479efcfcff214bc865d06560677ac/papersplease/">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Papers, Please — Web</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #pp-root { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; }
+  #pp-canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; cursor: none; touch-action: none; }
+  #pp-loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #b5b5b5; font: 14px monospace; background: #000; }
+  #pp-saves { position: fixed; right: 6px; bottom: 6px; display: flex; gap: 4px; opacity: 0.35; z-index: 5; }
+  #pp-saves:hover { opacity: 1; }
+  #pp-saves button { font: 11px monospace; background: #222; color: #ccc; border: 1px solid #555; padding: 2px 6px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="pp-root"><canvas id="pp-canvas"></canvas></div>
+<div id="pp-loading">Loading…</div>
+<div id="pp-saves">
+  <button id="pp-export" title="Download every save as a JSON file">Export save</button>
+  <button id="pp-import" title="Replace saves from a JSON file and reload">Load save</button>
+  <input id="pp-import-file" type="file" accept=".json,application/json" hidden="" />
+</div>
+<script>
+(function () {
+  "use strict";
+  var DATA = (window.__ppDataRoot || "data/");
+  var LANGS = ["cs","de","en","es","eu","fr","id","it","ja","ko","pl","pt-BR","ru","tr","ukr","zh"];
+  var PREFIX = "papersplease:";
+  var assets = window.__ppAssets = window.__ppAssets || {};
+  var loading = document.getElementById("pp-loading");
+
+  // streamed assets (audio). A single-file build replaces this with its part loader.
+  window.__ppFetch = window.__ppFetch || function (name) {
+    return fetch(DATA + name).then(function (r) {
+      if (!r.ok) throw new Error(name + ": " + r.status);
+      return r.arrayBuffer();
+    });
+  };
+
+  function fit() {
+    var c = document.getElementById("pp-canvas");
+    if (!c.width) return;
+    var sx = window.innerWidth / c.width, sy = window.innerHeight / c.height;
+    var s = Math.min(sx, sy);
+    if (s >= 1) s = Math.floor(s * c.width) / c.width;
+    c.style.width = Math.floor(c.width * s) + "px";
+    c.style.height = Math.floor(c.height * s) + "px";
+  }
+  window.addEventListener("resize", fit);
+
+  // ---- save export / import (G8.3) ----
+  document.getElementById("pp-export").onclick = function () {
+    var out = {}, skipped = [];
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k.indexOf(PREFIX) === 0) out[k.substring(PREFIX.length)] = localStorage.getItem(k);
+      else skipped.push(k);
+    }
+    if (skipped.length) console.log("save export skipped non-game keys:", skipped);
+    var blob = new Blob([JSON.stringify({ game: "papersplease-web", version: 1, saves: out }, null, 1)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "papersplease-saves.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  };
+  var fileInput = document.getElementById("pp-import-file");
+  document.getElementById("pp-import").onclick = function () { fileInput.click(); };
+  fileInput.onchange = function () {
+    var f = fileInput.files[0];
+    if (!f) return;
+    f.text().then(function (txt) {
+      var data = JSON.parse(txt);
+      if (!data || data.game !== "papersplease-web" || typeof data.saves !== "object") throw new Error("not a Papers, Please web save file");
+      if (!confirm("Replace all current saves with the ones in this file?")) return;
+      var drop = [];
+      for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.indexOf(PREFIX) === 0) drop.push(k); }
+      drop.forEach(function (k) { localStorage.removeItem(k); });
+      Object.keys(data.saves).forEach(function (k) { localStorage.setItem(PREFIX + k, String(data.saves[k])); });
+      location.reload();
+    }).catch(function (e) { alert("Could not load save: " + e.message); });
+  };
+
+  // ---- boot ----
+  var files = ["assets/Art.dat"].concat(LANGS.map(function (l) { return "loc/" + l + ".zip"; }));
+  var urls = { "assets/Art.dat": DATA + "Art.dat" };
+  LANGS.forEach(function (l) { urls["loc/" + l + ".zip"] = DATA + "loc/" + l + ".zip"; });
+  var done = 0;
+  Promise.all(files.map(function (name) {
+    if (assets[name]) { done++; return null; }
+    return fetch(urls[name]).then(function (r) {
+      if (!r.ok) throw new Error(name + ": " + r.status);
+      return r.arrayBuffer();
+    }).then(function (ab) {
+      assets[name] = ab; done++;
+      loading.textContent = "Loading… " + done + "/" + files.length;
+    });
+  })).then(function () {
+    // browsers keep audio locked until a user gesture, and the title animation runs on the
+    // music clock, so boot the game from a click (skipped when autoplay is already allowed)
+    function boot() {
+      var s = document.createElement("script");
+      s.src = window.__ppGameJs || "game.js";
+    s.onload = function () {
+      loading.style.display = "none";
+      fit();
+      var c = document.getElementById("pp-canvas");
+      new ResizeObserver(fit).observe(c);
+    };
+      document.body.appendChild(s);
+    }
+    var probe = null;
+    try { probe = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    var unlocked = !probe || probe.state === "running";
+    if (probe) probe.close();
+    if (unlocked || window.__ppNoGate) { boot(); return; }
+    loading.textContent = "Click to play";
+    loading.style.cursor = "pointer";
+    var go = function () {
+      loading.removeEventListener("pointerdown", go);
+      window.removeEventListener("keydown", go);
+      loading.textContent = "Loading…";
+      boot();
+    };
+    loading.addEventListener("pointerdown", go);
+    window.addEventListener("keydown", go);
+  }).catch(function (e) {
+    loading.textContent = "Failed to load: " + e.message;
+  });
+})();
+</script>
+</body>
+</html>
