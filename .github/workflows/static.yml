@@ -41,8 +41,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
-        with:
-          # The published artifact is ~2.7 GB, so the default 10 minute
-          # timeout (600000ms) is not enough for the Pages CDN to sync.
-          timeout: 1800000
-          error_count: 20

@@ -111,13 +111,6 @@
     "featured": true
   },
   {
-    "id": 17,
-    "name": "Ravenfield",
-    "gameUrl": "files/ravenfield/index.html",
-    "imageUrl": "img/ravenfield.png",
-    "porter": "gurtmuncher"
-  },
-  {
     "id": 18,
     "name": "Happy Room",
     "gameUrl": "files/happy-room/index.html",
@@ -160,14 +153,6 @@
     "gameUrl": "files/plauge/index.html",
     "imageUrl": "img/plauge.png",
     "porter": "reeyuki"
-  },
-  {
-    "id": 25,
-    "name": "Trombone Champ",
-    "gameUrl": "files/tchamp/index.html",
-    "imageUrl": "img/tchamp/img.png",
-    "porter": "gurtmuncher",
-    "featured": true
   },
   {
     "id": 26,
