@@ -308,5 +308,13 @@
     "gameUrl": "files/papersplease/index.html",
     "imageUrl": "img/papersplease.jpg",
     "porter": "dasher"
+  },
+  {
+    "id": 46,
+    "name": "Meccha Chameleon",
+    "gameUrl": "files/meccha-chameleon/index.html",
+    "imageUrl": "img/meccha-chameleon.webp",
+    "porter": "crax",
+    "featured": true
   }
 ]

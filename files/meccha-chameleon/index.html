@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en"><head>
+<base href="https://cdn.jsdelivr.net/gh/mynamescrax/gamesforaetheris@main/mechachameleon/">
+<script>
+// Relay keepalive and teardown. The proxy in front of the relay (Cloudflare) closes a WebSocket that sends no
+// data for about 100 s, and the game sends nothing while a map loads or a menu sits open. Once the page has said
+// hello to the relay (an H frame), send a no-op search (Q with qid 0xffffffff) every 30 s: the relay counts it as
+// activity and answers nothing, so no game code sees it. The hello is the test, not the URL: the public relay is
+// wss://aetheris.win/eos-relay and the dev server's is /relay.
+(function () {
+  var nativeSend = WebSocket.prototype.send, started = new WeakSet(), sockets = [];
+  function keepalive(ws) {
+    var timer = setInterval(function () {
+      if (ws.readyState !== 1) { if (ws.readyState > 1) clearInterval(timer); return; }
+      var q = new Uint8Array(5);
+      q[0] = 0x51; q[1] = q[2] = q[3] = q[4] = 0xff;
+      try { nativeSend.call(ws, q); } catch (e) {}
+    }, 30000);
+  }
+  // The runtime pauses the guest at a frame boundary while the tab is hidden (rt/web/library.js, ?bgrun turns that
+  // off), so a host answered nothing and a joining page never left its loading screen whenever its window was not the
+  // one in front - the relay still had both sockets, the packets just stopped. Turn ?bgrun on for a page that talks to
+  // the relay (at load, and again when the hello arrives in case the URL had no relay of its own), so hosting and
+  // joining work whatever window the player is looking at. Measured with the hidden page forced: without it the guest
+  // presents 0 frames in 8 s hidden, with it 58 fps. The runtime reads the option at its first hidden frame.
+  function bgRun() {
+    try {
+      var u = new URL(location.href);
+      if (u.searchParams.has('bgrun')) return;
+      u.searchParams.set('bgrun', '1');
+      history.replaceState(history.state, '', u.href);
+    } catch (e) {}
+  }
+  // also at load, before the guest starts: a tab hidden during the download would otherwise cache the old answer.
+  // The relay is part of the build (PROD_RELAY), so this does not depend on anything in the address.
+  try { bgRun(); } catch (e) {}
+  WebSocket.prototype.send = function (data) {
+    var result = nativeSend.call(this, data);
+    try {
+      if (!started.has(this) && data && data.byteLength >= 33) {
+        var view = new Uint8Array(data.buffer || data, data.byteOffset || 0, 1);
+        if (view[0] === 0x48) { started.add(this); sockets.push(this); keepalive(this); bgRun(); }
+      }
+    } catch (e) {}
+    return result;
+  };
+  // A guest that exited (its process called TerminateProcess/ExitProcess, often after running out of memory) must not
+  // keep its servers listed: the keepalive would hold the socket open forever and everyone who clicked one of them
+  // would sit on a loading screen. Closing it makes the relay withdraw them.
+  window.__rxcRelayClose = function (why) {
+    for (var i = 0; i < sockets.length; i++) {
+      try { if (sockets[i].readyState < 2) sockets[i].close(1000, String(why || 'guest exited').slice(0, 100)); } catch (e) {}
+    }
+    sockets = [];
+  };
+})();
+</script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meccha Chameleon</title>
+<style>
+  :root { color-scheme: dark; --bg: #07080a; --panel: rgba(12, 14, 18, 0.86); --ink: #e8ecf1; --dim: #8b95a3; --accent: #5fbf3f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  canvas { display: block; background: #000; width: min(100vw, calc(100vh * 16 / 9)); height: min(100vh, calc(100vw * 9 / 16)); outline: none; image-rendering: auto; }
+  #overlay { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(20, 24, 30, 0.75), rgba(0, 0, 0, 0.95)); transition: opacity .4s; }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  /* No landing page: the page starts the game by itself, so the overlay is only a progress line (resolution,
+     graphics and 3D resolution are the HUD selects at the top right) */
+  #overlay .card { padding: 0 24px; }
+  #overlay #status { margin-top: 0; font-size: 13px; }
+  .card { width: min(520px, calc(100vw - 32px)); text-align: center; padding: 28px 24px; }
+  .card h1 { margin: 0 0 6px; font-size: 34px; letter-spacing: .02em; }
+  .card p { margin: 0 0 22px; color: var(--dim); }
+  .resolution { display: block; margin: 0 0 16px; color: var(--dim); }
+  select { font: inherit; color: var(--ink); background: #151820; border: 1px solid #404550; border-radius: 6px; padding: 5px 9px; margin-left: 6px; }
+  #resolution-hud, #quality-hud, #scale-hud { font-size: 12px; }
+  #play { font: inherit; font-size: 17px; font-weight: 600; color: #111; background: var(--accent); border: 0; border-radius: 10px; padding: 12px 34px; cursor: pointer; }
+  #play:disabled { opacity: .5; cursor: default; }
+  #status { margin-top: 18px; min-height: 1.4em; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #startup-log { display: none; max-height: 180px; overflow: auto; margin: 14px 0 0; padding: 10px; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; background: #050607; border: 1px solid #30343b; border-radius: 6px; color: #b5c0ca; font: 11px/1.4 ui-monospace, monospace; }
+  #startup-log.show { display: block; }
+  #bar { height: 4px; margin-top: 10px; background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden; }
+  #bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #bar.indeterminate > div { width: 35% !important; transition: none; animation: loading-sweep 1.4s ease-in-out infinite; }
+  @keyframes loading-sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  #hud { position: fixed; top: 8px; right: 10px; display: flex; gap: 8px; align-items: center; opacity: .0; transition: opacity .3s; }
+  body:hover #hud, #hud.show { opacity: 1; }
+  #hud button { font: inherit; font-size: 12px; color: var(--ink); background: var(--panel); border: 1px solid rgba(255,255,255,.1); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+  #fps { font: 12px ui-monospace, monospace; color: var(--dim); background: var(--panel); padding: 4px 8px; border-radius: 7px; display: none; }
+  #log { position: fixed; left: 0; right: 0; bottom: 0; height: 38vh; margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; font: 11px/1.35 ui-monospace, monospace; color: #9aa6b4; background: rgba(5, 6, 8, .92); border-top: 1px solid #222; display: none; }
+  #hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--dim); background: var(--panel); padding: 5px 12px; border-radius: 8px; opacity: 0; transition: opacity .4s; pointer-events: none; }
+  #hint.show { opacity: 1; }
+  #busy { position: fixed; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #fff; background: rgba(0,0,0,.55); padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #busy.show { opacity: 1; }
+  #busy i { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; will-change: transform; }
+  /* who ported this: transparent text in the corner, never in the way of the game's own input */
+  #credit { position: fixed; right: 14px; bottom: 7px; pointer-events: none; user-select: none; -webkit-user-select: none;
+    font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .02em;
+    color: rgba(255,255,255,.55); text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 10px rgba(0,0,0,.7); white-space: nowrap; }
+  #credit a { color: inherit; text-decoration: none; }
+  #fatal { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: radial-gradient(ellipse at center, rgba(34, 16, 16, 0.9), rgba(0, 0, 0, 0.97)); }
+  #fatal.hidden { display: none; }
+  #fatal #fatal-title { color: #f0b0a0; font-size: 26px; }
+  #fatal #fatal-msg { color: #c8cfd8; white-space: pre-wrap; }
+  #fatal-reload { font: inherit; font-size: 17px; font-weight: 600; color: #111; background: var(--accent); border: 0; border-radius: 10px; padding: 12px 34px; cursor: pointer; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style></head>
+<body>
+<div id="stage"><canvas id="canvas" width="1280" height="720" tabindex="0"></canvas></div>
+<div id="hud"><select id="resolution-hud" aria-label="Resolution (restarts game)" title="Resolution (restarts game)"><option value="960x540">540p</option><option value="1280x720">720p</option><option value="1920x1080">1080p</option><option value="2560x1440">1440p</option></select><select id="quality-hud" aria-label="Graphics preset (restarts game)" title="Graphics preset (restarts game)"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="epic">Epic</option><option value="game">Game menu</option></select><select id="scale-hud" aria-label="3D resolution (restarts game)" title="3D resolution (restarts game)"><option value="auto">Auto</option><option value="100">100%</option><option value="75">75%</option><option value="67">67%</option><option value="50">50%</option></select><span id="fps"></span><button id="bsound" title="Sound on/off">Sound: on</button><button id="bfps" title="Frame rate (F8)">FPS</button><button id="bvsync" title="Frame rate cap: 60, 30 or 15 fps for lower-end devices, then the screen refresh rate, then uncapped">Frame rate: 60 fps</button><button id="bmouse" title="Capture the mouse for camera control (F10). Esc releases it">Mouse: free</button><button id="blog" title="Engine log (F9)">Log</button><button id="bfull" title="Fullscreen (F11)">Fullscreen</button><button id="bclose" title="Ask before closing this tab">Confirm close: on</button></div>
+<div id="hint">Keyboard and mouse work as on PC. Touchpad: hold Z for the middle button (paint mode: hold Z and move to turn the camera)</div>
+<div id="busy"><i></i><span>Loading…</span></div>
+<pre id="log"></pre>
+<div id="credit">port by crax / https://aetheris.win / https://crax.lol/</div>
+<!-- unrecoverable failures: the WebGL context was lost, the graphics worker died, or the tab could not get its memory -->
+<div id="fatal" class="hidden"><div class="card">
+  <h1 id="fatal-title">The game stopped</h1>
+  <p id="fatal-msg"></p>
+  <button id="fatal-reload">Reload the page</button>
+</div></div>
+<div id="overlay"><div class="card">
+  <div id="status"></div>
+  <div id="bar"><div></div></div>
+  <button id="play" hidden>Play</button>
+  <pre id="startup-log" role="log" aria-live="polite"></pre>
+</div></div>
+</div></div>
+<script>
+// ?mt=1 loads the threaded module (rexcomp_mt.js, built with build.py web --threads) instead of the cooperative one.
+// It is a separate wasm module, so switching back is just dropping the flag.
+// jsDelivr answers 403 for a file it has not cached yet when its own GitHub fetch fails: about one request in twenty
+// on this repo, one file at a time, and the next attempt usually succeeds. Without a retry one unlucky 1 MB chunk ends
+// a file read and the game stalls, so retry once, then try the other jsDelivr mirrors and finally raw GitHub. Inlined
+// rather than loaded as a file so a jsDelivr @main cache delay can never leave the page running without it.
+(function () {
+  var RETRY = [403, 429, 500, 502, 503, 504], original = globalThis.fetch.bind(globalThis), tried = new Set();
+  function mirrorsOf(url) {
+    var u; try { u = new URL(url); } catch (e) { return []; }
+    var m = /^\/gh\/([^/]+)\/([^@/]+)@([^/]+)\/(.+)$/.exec(u.pathname);
+    if (!m || !/(^|\.)jsdelivr\.net$/.test(u.host)) return [];
+    var user = m[1], repo = m[2], ref = m[3], rest = m[4];
+    return [
+      'https://gcore.jsdelivr.net/gh/' + user + '/' + repo + '@' + ref + '/' + rest + u.search,
+      'https://fastly.jsdelivr.net/gh/' + user + '/' + repo + '@' + ref + '/' + rest + u.search,
+      'https://raw.githubusercontent.com/' + user + '/' + repo + '/' + ref + '/' + rest,
+    ].filter(function (x) { return !tried.has(x); });
+  }
+  function attempt(url, init) {
+    tried.add(url);
+    return original(url, init).catch(function () { return { ok: false, status: 0 }; });
+  }
+  globalThis.fetch = function (input, init) {
+    var url = input instanceof Request ? input.url : String(input);
+    return attempt(url, init).then(function (res) {
+      if (res.ok || RETRY.indexOf(res.status) < 0) return res;
+      return attempt(url, init).then(function (again) {
+        if (again.ok || RETRY.indexOf(again.status) < 0) return again;
+        var list = mirrorsOf(url);
+        function next(i) {
+          if (i >= list.length) return again;
+          return attempt(list[i], init).then(function (alt) {
+            if (alt.ok) return alt;
+            return RETRY.indexOf(alt.status) < 0 ? again : next(i + 1);
+          });
+        }
+        return next(0);
+      });
+    });
+  };
+}());
+// GitHub refuses files over 100 MB, so the 475 MB runtime wasm and the 183 MB guest image ship as
+// rexcomp.wasm.partNN / image.bin.partNN (12 MiB each). This stitches the parts back into one streamed response before
+// rexcomp.js asks for either file, so the runtime never knows they were split. The counts below are what the folder
+// holds: no probe request past the last part, so no stray 404 in the console (a short read still ends the stream).
+(function () {
+  var SPLIT = {
+    'rexcomp.wasm': { type: 'application/wasm', pad: 2, parts: 40 },
+    'image.bin': { type: 'application/octet-stream', pad: 2, parts: 16 },
+  };
+  var CDN_BASE = 'https://cdn.jsdelivr.net/gh/mynamescrax/gamesforaetheris@main/mechachameleon/';
+  var query = new URLSearchParams(location.search);
+  var cdn = query.has('cdn') ? query.get('cdn') : CDN_BASE;
+  globalThis.RXC_CDN = cdn ? new URL(cdn.endsWith('/') ? cdn : cdn + '/', location.href).href : '';
+  if (typeof ReadableStream !== 'function' || typeof Response !== 'function') return;
+  var original = globalThis.fetch.bind(globalThis);
+  function target(input) {
+    var url;
+    try { url = new URL(input instanceof Request ? input.url : String(input), document.baseURI); } catch (e) { return null; }
+    var name = Object.keys(SPLIT).filter(function (n) { return url.pathname.endsWith('/' + n); })[0];
+    return name ? { name: name, url: url, cfg: SPLIT[name] } : null;
+  }
+  globalThis.fetch = function (input, init) {
+    var hit = target(input);
+    if (!hit) return original(input, init);
+    var name = hit.name, url = hit.url, cfg = hit.cfg;
+    var local = url.origin + url.pathname.slice(0, -name.length);
+    var stream = new ReadableStream({
+      start: async function (controller) {
+        try {
+          for (var i = 1; i <= cfg.parts; i += 1) {
+            var file = name + '.part' + String(i).padStart(cfg.pad, '0');
+            var part = globalThis.RXC_CDN ? globalThis.RXC_CDN + file : local + file;
+            var res = await original(part, init);
+            if (!res.ok) { if (i === 1) throw new Error('missing ' + file + ' (HTTP ' + res.status + ')'); break; }
+            if (!res.body) { controller.enqueue(new Uint8Array(await res.arrayBuffer())); continue; }
+            var reader = res.body.getReader();
+            for (;;) {
+              var chunk = await reader.read();
+              if (chunk.done) break;
+              controller.enqueue(chunk.value);
+            }
+          }
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+    });
+    return Promise.resolve(new Response(stream, { status: 200, statusText: 'OK', headers: { 'content-type': cfg.type } }));
+  };
+}());
+document.write('<scr' + 'ipt src="gfx-boot.js"></scr' + 'ipt>');
+document.write('<scr' + 'ipt src="rexcomp' + (new URLSearchParams(location.search).has('mt') ? '_mt' : '') + '.js"></scr' + 'ipt>');
+</script>
+<script>
+// where the game data (manifest.json + game/) is served from: '' = next to this page, or a CDN base such as
+// 'https://cdn.jsdelivr.net/gh/<user>/<repo>@<tag>/' (build.py pack writes the chunked tree)
+// The 3.1 GB of packed game data sits on the CDN (the loader above sets RXC_CDN, ?cdn=<url> overrides it, ?base=<url>
+// overrides just the game data). This page and the runtime scripts stay on their own origin because the graphics
+// worker - gfx_worker.js, rexcomp_gfx.js and rexcomp_gfx.wasm - has to be same-origin with the page.
+const GAME_BASE = globalThis.RXC_CDN || '';
+// Meccha Chameleon (UE 5.6): the shipping exe inside the virtual C: drive, the offline EOS stand-in, SSE4.2 in CPUID
+// (UE 5.6 refuses to start without it) and lenient imports.
+// ?REXCOMP_<NAME>=... in the URL overrides each one.
+const PORT_ENV = { REXCOMP_EXE_PATH: 'C:\\game\\Chameleon\\Binaries\\Win64\\PenguinHotel-Win64-Shipping.exe', REXCOMP_EOSFAKE: '1', REXCOMP_SSE42: '1',
+  REXCOMP_LENIENT: '1',
+  // audio: the OnBufferEnd context UE's output voice primes with is pCallback - 0x238 (FMixerPlatformXAudio2), and with
+  // -nothreading the runtime sets UE's source-command pump flag at context -> +0x70 -> +0x3c0 -> +0x244 (see uePump below)
+  REXCOMP_XAUDIO2_CTX_OFF: '238', REXCOMP_XAUDIO2_UE_PUMP: '70,3c0,244',
+  // a 64x64x16 lookup table UE builds once at start-up (by its size and maths the hair scattering LUT) runs as a fragment
+  // program on the GPU: on the CPU, in its C translation, it held the first frame for 45 s on a fast PC. ?REXCOMP_CS_GPU=
+  // runs it on the CPU again.
+  REXCOMP_CS_GPU: '270fbb2569047dbf',
+  // UE rewrites whole 64 KB structured buffers with UpdateSubresource every frame, mostly with bytes the graphics worker
+  // already has: diff them against a mirror as Unmap does and send only the changed range (lobby at 3x CPU throttle:
+  // command transport 4.5% -> 3.1% of the main thread). All buffer mirrors together stay under 64 MB.
+  REXCOMP_MIRROR_UPDATE: '1', REXCOMP_BUFMIRROR_MB: '64' };
+// added on low-end devices (LOW_END below): UWidgetComponent::ShouldDrawWidget (136ebe60) sees a RedrawTime (this+0x59c)
+// of at least 0.05 s, so world-space widgets (nameplates, the lobby boards) re-render their texture at most 20 times a
+// second; their quads still move every frame. 33.8 -> 35.9 fps in the lobby at 3x CPU throttling. ?REXCOMP_MINF32= turns it off.
+// The relay is part of the build, not of the address: this page always uses this relay and an ?REXCOMP_RELAY= in
+// the URL is ignored, so a player cannot point the game at another relay or turn multiplayer off. Testing another
+// one (tools/eos_relay.py through the dev server, say) means editing this constant.
+const PROD_RELAY = 'wss://aetheris.win/eos-relay';
+const LOW_END_ENV = { REXCOMP_MINF32: '136ebe60:0x59c:0.05' };
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('canvas'), statusEl = $('status');
+  const startupLog = $('startup-log'); let startupLogActive = false, startupLogStart = 0, startupPending = '', startupTimer = 0, lastStartupStatus = '';
+  const flushStartupLog = () => {
+    startupTimer = 0;
+    if (!startupPending) return;
+    startupLog.textContent = (startupLog.textContent + startupPending).slice(-24000);
+    startupPending = '';
+    startupLog.scrollTop = startupLog.scrollHeight;
+  };
+  const appendStartupLog = line => {
+    if (!startupLogActive) return;
+    startupPending += '[' + ((performance.now() - startupLogStart) / 1000).toFixed(1) + 's] ' + line.slice(0, 4000) + '\n';
+    if (startupPending.length > 48000) startupPending = startupPending.slice(-24000);
+    if (!startupTimer) startupTimer = setTimeout(flushStartupLog, 100);
+  };
+  // audio: UE 5.6 run with -nothreading never pumps its source command queue - FMixerSourceManager::Update's
+  // single-thread branch only sets bPumpQueue when RenderThreadCommandBufferIndex equals its own negation - so no sound
+  // ever starts (play, stop and volume commands pile up unrun). Until the runtime sets the flag itself
+  // (REXCOMP_XAUDIO2_UE_PUMP, logged as "UE command pump"), the page does, every few ms:
+  // [[[context + 0x70] + 0x3c0] + 0x244] = 1, the context being the FMixerPlatformXAudio2 the output buffers carry
+  // (-> AudioMixer -> SourceManager -> bPumpQueue). The guest base and the context come from the runtime's log lines
+  // (console.log, hooked below). ?uepump=0 turns it off.
+  const uePump = { off: new URLSearchParams(location.search).get('uepump') === '0', base: 0, ctx: 0, timer: 0 };
+  const uePumpWatch = s => {
+    if (uePump.off || typeof s !== 'string' || s.charCodeAt(0) !== 91) return;
+    if (s.includes('UE command pump')) { uePump.off = true; clearInterval(uePump.timer); return; }
+    if (uePump.timer) return;
+    let m;
+    if ((m = /^\[web\] guest memory at 0x([0-9a-f]+)/.exec(s))) uePump.base = parseInt(m[1], 16);
+    else if ((m = /^\[xaudio2\] first source buffer: \d+ bytes, context ([0-9a-f]+)/.exec(s))) uePump.ctx = parseInt(m[1], 16);
+    else return;
+    if (!uePump.base || !uePump.ctx) return;
+    let dv = null, logged = false, errors = 0;
+    const ptr = a => { const lo = dv.getUint32(uePump.base + a, true), hi = dv.getUint32(uePump.base + a + 4, true); return !hi && lo >= 0x10000 && lo < 0xb0000000 ? lo : 0; };
+    uePump.timer = setInterval(() => {
+      try {
+        const H = M && M.HEAPU8; if (!H) return;
+        if (!dv || dv.buffer !== H.buffer) dv = new DataView(H.buffer);
+        const dev = ptr(uePump.ctx + 0x70), sm = dev && ptr(dev + 0x3c0); if (!sm) return;
+        dv.setUint32(uePump.base + sm + 0x244, 1, true);
+        if (!logged) { logged = true; console.log(`[web] UE audio pump on: source manager ${sm.toString(16)}, context ${uePump.ctx.toString(16)}`); }
+      } catch (e) { if (++errors === 3) { clearInterval(uePump.timer); console.warn('[web] UE audio pump stopped:', e); } }
+    }, 4);
+  };
+  for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+    const original = console[level].bind(console);
+    console[level] = (...args) => {
+      appendStartupLog('[' + level + '] ' + args.map(v => v instanceof Error ? v.stack || String(v) : String(v)).join(' '));
+      if (level === 'log') uePumpWatch(args[0]);
+      original(...args);
+    };
+  }
+  addEventListener('error', e => appendStartupLog('[error] ' + (e.message || e.error || e)));
+  addEventListener('unhandledrejection', e => appendStartupLog('[error] ' + (e.reason && e.reason.stack || e.reason)));
+  const status = s => { statusEl.textContent = s; if (s !== lastStartupStatus) { lastStartupStatus = s; appendStartupLog('[status] ' + s); } };
+  // A failure the page cannot recover from - the GPU lost its WebGL context, the graphics worker died, or the tab
+  // could not get its wasm memory - stops the spinner and offers a reload instead of a frozen canvas. The engine has
+  // no path that rebuilds its GL resources (textures, programs, render targets), so a reload is the only way back.
+  const showFatal = (title, msg) => {
+    window.__rxcFatal = title + ': ' + msg;
+    try { window.__rxcRelayClose && window.__rxcRelayClose(title); } catch (e) {}
+    const f = $('fatal');
+    if (f) { $('fatal-title').textContent = title; $('fatal-msg').textContent = msg; f.classList.remove('hidden'); }
+    $('overlay').classList.add('hidden'); $('busy').classList.remove('show');
+    console.error('[web] ' + title + ': ' + msg);
+    if (globalThis.__rxcSink) globalThis.__rxcSink.push('[web] ' + title + ': ' + msg);
+  };
+  window.rxcShowFatal = showFatal;                     // tests: rxcShowFatal('title', 'text')
+  const fatalText = e => String((e && (e.message || e)) || e);
+  // Chrome reports a WebAssembly.Memory allocation it cannot satisfy as a RangeError ("could not allocate memory"),
+  // and a renderer near the tab's memory limit throws the same before Chrome would kill the tab.
+  const outOfMemory = e => (e && e.name === 'RangeError') || /out of memory|cannot allocate|allocation failed|Array buffer allocation|wasm memory/i.test(fatalText(e));
+  if (!('Suspending' in WebAssembly)) { status('This browser lacks WebAssembly JavaScript Promise Integration — use Chrome or Edge 137 or newer.'); $('play').disabled = true; }
+  // plain http from another machine (a Chromebook opening http://<pc>:8120/) is not a secure context: no AudioWorklet (the
+  // sound takes the ScriptProcessor fallback) and no keyboard lock, so Ctrl (crouch) + W reaches the browser and closes the tab
+  if (!window.isSecureContext) console.warn('[web] plain http page: sound takes a fallback path, and Ctrl+W (crouch + forward) closes the tab once Confirm close lets it. For a secure page,'
+    + ' start the server with REXCOMP_TLS=1 and open https://' + location.host + '/ (accept the certificate once), or add ' + location.origin
+    + ' under chrome://flags/#unsafely-treat-insecure-origin-as-secure and relaunch the browser. Then play in Fullscreen.');
+  // 4 GB or less (navigator.deviceMemory, Chromium only): the game takes about 4 GB in its tab (wasm memory, the file
+  // block cache, the graphics worker), so warn, and cap the block cache at 256 MB instead of 768
+  const LOW_MEM = (navigator.deviceMemory || 8) <= 4;
+  if (LOW_MEM) console.warn('[web] this device reports ' + navigator.deviceMemory + ' GB of memory: the game needs about 4 GB in this tab,'
+    + ' so close other tabs and apps first, or it may run out of memory.');
+
+  // physical key (KeyboardEvent.code) -> [virtual key, scan code, extended]
+  const K = {};
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').forEach((ch, i) => { K['Key' + ch] = [65 + i, [0x1E,0x30,0x2E,0x20,0x12,0x21,0x22,0x23,0x17,0x24,0x25,0x26,0x32,0x31,0x18,0x19,0x10,0x13,0x1F,0x14,0x16,0x2F,0x11,0x2D,0x15,0x2C][i], 0]; });
+  for (let d = 0; d <= 9; d++) K['Digit' + d] = [48 + d, d === 0 ? 0x0B : d + 1, 0];
+  Object.assign(K, { Escape: [0x1B, 0x01, 0], Minus: [0xBD, 0x0C, 0], Equal: [0xBB, 0x0D, 0], Backspace: [0x08, 0x0E, 0], Tab: [0x09, 0x0F, 0], BracketLeft: [0xDB, 0x1A, 0], BracketRight: [0xDD, 0x1B, 0],
+    Enter: [0x0D, 0x1C, 0], ControlLeft: [0x11, 0x1D, 0], Semicolon: [0xBA, 0x27, 0], Quote: [0xDE, 0x28, 0], Backquote: [0xC0, 0x29, 0], ShiftLeft: [0x10, 0x2A, 0], Backslash: [0xDC, 0x2B, 0],
+    Comma: [0xBC, 0x33, 0], Period: [0xBE, 0x34, 0], Slash: [0xBF, 0x35, 0], ShiftRight: [0x10, 0x36, 0], NumpadMultiply: [0x6A, 0x37, 0], AltLeft: [0x12, 0x38, 0], Space: [0x20, 0x39, 0],
+    CapsLock: [0x14, 0x3A, 0], F1: [0x70, 0x3B, 0], F2: [0x71, 0x3C, 0], F3: [0x72, 0x3D, 0], F4: [0x73, 0x3E, 0], F5: [0x74, 0x3F, 0], F6: [0x75, 0x40, 0], F7: [0x76, 0x41, 0], F10: [0x79, 0x44, 0],
+    F12: [0x7B, 0x58, 0], Numpad7: [0x67, 0x47, 0], Numpad8: [0x68, 0x48, 0], Numpad9: [0x69, 0x49, 0], NumpadSubtract: [0x6D, 0x4A, 0], Numpad4: [0x64, 0x4B, 0], Numpad5: [0x65, 0x4C, 0],
+    Numpad6: [0x66, 0x4D, 0], NumpadAdd: [0x6B, 0x4E, 0], Numpad1: [0x61, 0x4F, 0], Numpad2: [0x62, 0x50, 0], Numpad3: [0x63, 0x51, 0], Numpad0: [0x60, 0x52, 0], NumpadDecimal: [0x6E, 0x53, 0],
+    NumpadEnter: [0x0D, 0x1C, 1], ControlRight: [0x11, 0x1D, 1], AltRight: [0x12, 0x38, 1], ArrowUp: [0x26, 0x48, 1], ArrowLeft: [0x25, 0x4B, 1], ArrowRight: [0x27, 0x4D, 1], ArrowDown: [0x28, 0x50, 1],
+    Insert: [0x2D, 0x52, 1], Delete: [0x2E, 0x53, 1], Home: [0x24, 0x47, 1], End: [0x23, 0x4F, 1], PageUp: [0x21, 0x49, 1], PageDown: [0x22, 0x51, 1] });
+
+  let M = null, started = false, skipClosePrompt = false, confirmClose = true;
+  addEventListener('beforeunload', e => { if (started && confirmClose && !skipClosePrompt) { e.preventDefault(); e.returnValue = ''; } });
+  $('bclose').onclick = () => { confirmClose = !confirmClose; $('bclose').textContent = 'Confirm close: ' + (confirmClose ? 'on' : 'off'); };
+  $('fatal-reload').onclick = () => { skipClosePrompt = true; location.reload(); };
+  const q = new URLSearchParams(location.search);
+  // Very low end (2 or fewer logical CPUs, or 2 GB of memory): the cap starts at 15 fps instead of 30. ?verylowend=1 / ?verylowend=0 forces the answer
+  const VERY_LOW_END = q.has('verylowend') ? q.get('verylowend') !== '0' : (navigator.hardwareConcurrency || 8) <= 2 || (navigator.deviceMemory || 8) <= 2;
+  // Browser launch arguments and runtime settings.
+  // Chromebooks and other low-end devices (4 or fewer logical CPUs, or 4 GB or less of memory where the browser tells):
+  // 540p, the Low preset and a 67% 3D resolution by default. ?lowend=1 / ?lowend=0 forces the detection either way.
+  const LOW_END = q.has('lowend') ? q.get('lowend') !== '0' : (/\bCrOS\b/.test(navigator.userAgent) || (navigator.hardwareConcurrency || 8) <= 4
+    || (navigator.deviceMemory || 8) <= 4);
+  let res = (() => {
+    let saved = ''; try { saved = localStorage.getItem('rexcomp.resolution') || ''; } catch (_) {}
+    const m = /^(\d+)x(\d+)$/.exec(q.get('res') || saved); if (m && +m[1] >= 320 && +m[1] <= 7680 && +m[2] >= 180 && +m[2] <= 4320) return [+m[1], +m[2]];
+    if (LOW_END) return [960, 540];
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), cssW = Math.min(screen.width, screen.height * 16 / 9);
+    const w = Math.max(1280, Math.round(Math.min(cssW * dpr, +(q.get('maxw') || 1920)) / 16) * 16);
+    return [w, Math.round(w * 9 / 32) * 2];
+  })();
+  const resolutionSelects = [$('resolution-hud')];
+  const selectedResolution = res.join('x');
+  for (const select of resolutionSelects) {
+    if (![...select.options].some(o => o.value === selectedResolution)) select.add(new Option(selectedResolution, selectedResolution));
+    select.value = selectedResolution;
+    select.onchange = () => {
+      const value = select.value;
+      try { localStorage.setItem('rexcomp.resolution', value); } catch (_) {}
+      q.set('res', value);
+      if (started) { q.set('autostart', '1'); skipClosePrompt = true; location.search = q.toString(); return; }
+      res = value.split('x').map(Number);
+      for (const other of resolutionSelects) other.value = value;
+      history.replaceState(null, '', location.pathname + '?' + q.toString() + location.hash);
+    };
+  }
+  // Graphics preset: UE's scalability groups (view distance, shadows, post processing, textures, effects, foliage, shading
+  // ...) at one level, written to GameUserSettings.ini [ScalabilityGroups]. Low cuts both the GPU work and the draw calls
+  // the game thread records. The page writes a preset once, when it changes, so the Graphics page of the game's own
+  // settings menu still works afterwards; ?quality=low|medium|high|epic in the URL writes it at every start. Game menu
+  // writes nothing. Auto: Low on low-end devices (LOW_END), otherwise Game menu (Epic until changed there).
+  const QUALITY = { low: 0, medium: 1, high: 2, epic: 3 };
+  let quality = (() => {
+    let saved = ''; try { saved = localStorage.getItem('rexcomp.quality') || ''; } catch (_) {}
+    const v = (q.get('quality') || saved || 'auto').toLowerCase();
+    return v in QUALITY || v === 'game' ? v : 'auto';
+  })();
+  const effectiveQuality = () => quality === 'auto' ? (LOW_END ? 'low' : 'game') : quality;
+  const qualitySelects = [$('quality-hud')];
+  for (const select of qualitySelects) {
+    select.options[0].text = 'Auto (' + (LOW_END ? 'Low' : 'game menu') + ')';
+    select.value = quality;
+    select.onchange = () => {
+      quality = select.value;
+      try { localStorage.setItem('rexcomp.quality', quality); } catch (_) {}
+      q.delete('quality');
+      if (started) { q.set('autostart', '1'); skipClosePrompt = true; location.search = q.toString(); return; }
+      for (const other of qualitySelects) other.value = quality;
+      history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    };
+  }
+  const qualitySeed = () => {
+    const level = QUALITY[effectiveQuality()];
+    let applied = ''; try { applied = localStorage.getItem('rexcomp.quality.applied') || ''; } catch (_) {}
+    if (level === undefined || (!q.has('quality') && applied === effectiveQuality())) return [];
+    const gus = 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\GameUserSettings.ini';
+    const groups = ['ViewDistance', 'AntiAliasing', 'Shadow', 'GlobalIllumination', 'Reflection', 'PostProcess', 'Texture', 'Effects',
+      'Foliage', 'Shading', 'Landscape'];
+    // Version: UGameUserSettings resets everything to its defaults (Epic) when the file has none
+    return [{ file: gus, section: 'ScalabilityGroups', values: Object.fromEntries(groups.map(g => ['sg.' + g + 'Quality', String(level)])) },
+      { file: gus, section: '/Script/Engine.GameUserSettings', values: { Version: '5' } }];
+  };
+  const markQualityApplied = () => { try { localStorage.setItem('rexcomp.quality.applied', effectiveQuality()); } catch (_) {} };
+  // 3D resolution: r.ScreenPercentage, the share of the resolution the 3D view renders at before UE scales it up (menus
+  // and the HUD stay sharp). The lobby's GPU work at 960x540 Low on a 2-CU integrated GPU: 17 ms a frame at 100%, 12.7
+  // at 67%. Auto: 67% on low-end devices, whose GPUs (0.1-0.4 TFLOPS on Chromebooks) bound the frame rate as often as
+  // their CPUs; otherwise the game's own setting (the key is removed). ?scale=100|75|67|50|auto
+  const SCALES = ['100', '75', '67', '50'];
+  let scale = (() => {
+    let saved = ''; try { saved = localStorage.getItem('rexcomp.scale') || ''; } catch (_) {}
+    const v = q.get('scale') || saved || 'auto';
+    return SCALES.includes(v) ? v : 'auto';
+  })();
+  const effectiveScale = () => scale === 'auto' ? (LOW_END ? '67' : null) : scale;
+  const scaleSelects = [$('scale-hud')];
+  for (const select of scaleSelects) {
+    const prefix = select.id === 'scale-hud' ? '3D ' : '';
+    for (const o of select.options) o.text = prefix + (o.value === 'auto' ? 'Auto (' + (LOW_END ? '67%' : 'game') + ')' : o.value + '%');
+    select.value = scale;
+    select.onchange = () => {
+      scale = select.value;
+      try { localStorage.setItem('rexcomp.scale', scale); } catch (_) {}
+      q.delete('scale');
+      if (started) { q.set('autostart', '1'); skipClosePrompt = true; location.search = q.toString(); return; }
+      for (const other of scaleSelects) other.value = scale;
+      history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+    };
+  }
+  const launchArgs = () => {
+    // D3D11, no Steam, rendering and level loading on the game thread (?args=... replaces these; -nosound mutes the game)
+    const base = q.has('args') ? q.get('args') : '-d3d11 -nosteam -windowed -NoAsyncLoadingThread -norenderthread -nothreading';
+    return base.replace(/(?:^|\s)-Res[XY]=\d+/gi, '') + ` -ResX=${res[0]} -ResY=${res[1]}`;
+  };
+  // web defaults, merged key by key into Saved/Config/Windows/Engine.ini at every start (iniSeed below): no TAA, motion
+  // blur or local exposure, which need compute passes the WebGL2 backend cannot run. ?cvars=r.Foo:1,r.Bar:0 adds or
+  // overrides keys. Manual exposure (?cvars=r.DefaultFeature.AutoExposure:0,r.DefaultFeature.AutoExposure.Method:2) once
+  // turned the 3D view white, so it is not a default.
+  const WEB_CVARS = { 'r.AntiAliasingMethod': '0', 'r.TemporalAA.Upsampling': '0', 'r.DefaultFeature.AntiAliasing': '0', 'r.MotionBlurQuality': '0',
+    'r.DefaultFeature.MotionBlur': '0', 'r.LocalExposure': '0',
+    ...Object.fromEntries((q.get('cvars') || '').split(',').filter(x => x.includes(':')).map(x => { const i = x.indexOf(':'); return [x.slice(0, i), x.slice(i + 1)]; })) };
+
+  const toggle = (el, on) => { el.style.display = (on ?? (el.style.display === 'none' || !el.style.display)) ? 'block' : 'none'; };
+  $('blog').onclick = () => toggle($('log'));
+  $('bfps').onclick = () => { const f = $('fps'); f.style.display = f.style.display === 'inline' ? 'none' : 'inline'; };
+  // in fullscreen the keyboard lock (secure pages only) gives the game Esc and the browser's shortcuts: Ctrl (crouch) + W
+  // would otherwise close the tab. Holding Esc leaves fullscreen
+  $('bfull').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen().then(() => { try { if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(() => {}); } catch (e) {} }).catch(() => {}); };
+  // Mouse capture (pointer lock): the pointer is captured for the whole session, so the desktop cursor never leaves the
+  // game and the camera reads relative motion. The game's own cursor still works while captured: the runtime turns raw
+  // deltas into a moved (clamped) cursor for the Windows messages it posts (rt/web/host.c ev_mouse_raw), so menus stay
+  // clickable. Chrome only grants the lock from a user gesture, so the page asks as soon as the game starts and again on
+  // every click, key press and window focus. Esc always releases it (the browser's rule) and the next click takes it back;
+  // F10, or the HUD button, releases it until pressed again.
+  let wantLock = true, lockAsked = 0;
+  const isLocked = () => document.pointerLockElement === canvas;
+  const grab = () => { if (canvas.requestPointerLock) canvas.requestPointerLock({ unadjustedMovement: true }).catch(() => { try { const p = canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }); };
+  const lockLabel = () => { $('bmouse').textContent = isLocked() ? 'Mouse: captured' : wantLock ? 'Mouse: click to capture' : 'Mouse: free'; };
+  // (a HUD button or F10 is a request to release, so those presses must not re-capture it)
+  let retries = 0;
+  const syncLock = e => { if (e && ((e.target && e.target.closest && e.target.closest('#hud')) || e.code === 'F10')) return;
+    if (e) retries = 0;
+    if (wantLock && started && !isLocked() && performance.now() - lockAsked > 400) { lockAsked = performance.now(); grab(); } };
+  $('bmouse').onclick = () => { wantLock = !(wantLock || isLocked()); retries = 0;
+    if (!wantLock) { if (isLocked()) document.exitPointerLock(); } else { lockAsked = performance.now(); grab(); } lockLabel(); };
+  document.addEventListener('pointerlockchange', () => {
+    lockLabel();
+    // the game releases the cursor itself (SetCursorPos / ClipCursor travel as the rxclock event below) and Chrome drops
+    // the lock when its own rules say so: take it back, a few times at most, until the next click or key press
+    if (isLocked()) { retries = 0; return; }
+    if (wantLock && retries < 3) setTimeout(syncLock, 120 * ++retries);
+  });
+  // the game asks for the captured pointer through ClipCursor (rt/web/library.js dispatches rxclock): give it the lock.
+  // Its request for a free cursor is not taken: the pointer stays captured, and the cursor the game draws still moves
+  // because raw deltas are turned into Windows mouse moves (rt/web/host.c ev_mouse_raw).
+  addEventListener('rxclock', e => { if (e.detail) { retries = 0; lockAsked = 0; syncLock(); } });
+  addEventListener('pointerdown', syncLock, true); addEventListener('pointerup', syncLock, true); addEventListener('keydown', syncLock, true); addEventListener('focus', syncLock);
+  lockLabel();
+  // 30 fps: an even half rate for machines that cannot hold 60 (Chromebooks), with idle time between frames instead of
+  // a frame rate that wanders between 25 and 45. ?fps=N changes the first cap
+  const FPS = +q.get('fps') || 60;
+  const PACE = { cap: [FPS + ' fps', 'cap', FPS], cap30: ['30 fps', 'cap', 30], cap15: ['15 fps', 'cap', 15], vsync: ['Vsync', 'auto'], off: ['Uncapped', 'mc'] },
+    PACE_ORDER = ['cap', 'cap30', 'cap15', 'vsync', 'off'];
+  // Low-end devices start capped at 30, very low end ones at 15: at 60 the frame rate wanders between 25 and 45 as the CPU
+  // and GPU trade the bottleneck, which also heats a fanless Chromebook and makes it throttle. A saved choice still wins.
+  // Detection: the Chromebook / 4-core / 4 GB rule in LOW_END, and 2 cores or 2 GB in VERY_LOW_END.
+  let pace = PACE[q.get('pace')] ? q.get('pace') : PACE[localStorage.getItem('rxcPace')] ? localStorage.getItem('rxcPace') : (VERY_LOW_END ? 'cap15' : LOW_END ? 'cap30' : 'cap');
+  const setPace = p => { pace = p; if (window.rexcomp) { window.rexcomp.yieldMode = PACE[p][1]; window.rexcomp.fpsCap = PACE[p][2] || FPS; } localStorage.setItem('rxcPace', p); $('bvsync').textContent = 'Frame rate: ' + PACE[p][0]; };
+  $('bvsync').onclick = () => setPace(PACE_ORDER[(PACE_ORDER.indexOf(pace) + 1) % PACE_ORDER.length]);
+  setPace(pace);
+  // HUD buttons must never keep keyboard focus: Enter/Space would "click" them instead of reaching the game
+  for (const b of document.querySelectorAll('#hud button')) { b.tabIndex = -1; b.addEventListener('mousedown', e => e.preventDefault()); b.addEventListener('click', () => { b.blur(); canvas.focus(); }); }
+  setInterval(() => { const s = globalThis.__rxcStats; if (s) $('fps').textContent = `${s.fps.toFixed(0)} fps`; }, 500);
+  // ?soak=1: the same measurement the harness takes, for hardware it cannot reach (a Chromebook). Every 5 s one line,
+  // "[soak] t=..s fps=.. heap=..MB wasm=..MB", kept in window.__rxcSoak (window.rxcSoakDump() returns them as JSON):
+  // open the page with ?soak=1, play a map, and save the browser console (Ctrl+Shift+J) to record it.
+  if (q.has('soak')) {
+    const st0 = performance.now(); window.__rxcSoak = [];
+    setInterval(() => {
+      const st = globalThis.__rxcStats || {}, pm = performance.memory || {};
+      const row = { t: Math.round((performance.now() - st0) / 1000), fps: Math.round(st.fps || 0),
+        heapMB: pm.usedJSHeapSize ? pm.usedJSHeapSize >> 20 : 0, wasmMB: (M && M.HEAPU8) ? M.HEAPU8.length >> 20 : 0 };
+      window.__rxcSoak.push(row);
+      console.log('[soak] t=' + row.t + 's fps=' + row.fps + ' heap=' + row.heapMB + 'MB wasm=' + row.wasmMB + 'MB');
+    }, 5000);
+    window.rxcSoakDump = () => JSON.stringify(window.__rxcSoak);
+  }
+
+  // ---- input -> guest window messages
+  const ev = (name, ...a) => { if (M && M['_' + name]) M['_' + name](...a); };
+  const locked = () => document.pointerLockElement === canvas;
+  const pos = e => { const r = canvas.getBoundingClientRect(), cw = (M && M.canvasW) || canvas.width, ch = (M && M.canvasH) || canvas.height; return [Math.round((e.clientX - r.left) * cw / r.width), Math.round((e.clientY - r.top) * ch / r.height)]; };
+  // touchpads (Chromebooks) have no middle button: holding Z presses it, so that moving the pointer turns the paint
+  // mode's camera (its MMB drag; the game's other way, an Alt+LMB drag, can become a right click on ChromeOS) (?mmbkey=<a
+  // KeyboardEvent.code>, 0 = off). Z is free in all of the game's input contexts (C opens the config, G is EEYAN). The
+  // button stays down for at least 100 ms, so that a quick tap is not a press and release in one engine frame
+  const MMB_KEY = q.get('mmbkey') === '0' ? '' : (q.get('mmbkey') || 'KeyZ'); let mmbAt = 0;
+  const mmbUp = () => { if (!mmbAt) return; const d = Math.max(0, 100 - (performance.now() - mmbAt)); mmbAt = 0; setTimeout(() => ev('rxc_ev_mouse', 2, -1, -1, 1, 0), d); };
+  addEventListener('keydown', e => {
+    if (!started) return;
+    if (e.code === 'F9') { toggle($('log')); e.preventDefault(); return; }
+    if (e.code === 'F8') { $('bfps').onclick(); e.preventDefault(); return; }
+    if (e.code === 'F11') { $('bfull').onclick(); e.preventDefault(); return; }
+    if (e.code === 'F10') { $('bmouse').onclick(); e.preventDefault(); return; }
+    if (MMB_KEY && e.code === MMB_KEY) { if (!mmbAt) { mmbAt = performance.now(); ev('rxc_ev_mouse', 1, -1, -1, 1, 0); } e.preventDefault(); return; }
+    const k = K[e.code]; if (!k) return;
+    ev('rxc_ev_key', 1, k[0], k[1], (e.repeat ? 1 : 0) | (k[2] ? 2 : 0));
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey) ev('rxc_ev_char', e.key.charCodeAt(0));
+    else if (e.code === 'Enter' || e.code === 'Backspace' || e.code === 'Tab' || e.code === 'Escape') ev('rxc_ev_char', k[0]);
+    e.preventDefault();
+  });
+  addEventListener('keyup', e => { if (!started) return; if (MMB_KEY && e.code === MMB_KEY) { mmbUp(); e.preventDefault(); return; } const k = K[e.code]; if (!k) return; ev('rxc_ev_key', 0, k[0], k[1], k[2] ? 2 : 0); e.preventDefault(); });
+  canvas.addEventListener('mousemove', e => {
+    if (locked()) { if (e.movementX || e.movementY) ev('rxc_ev_mouse_raw', e.movementX, e.movementY); }
+    else {
+      const [x, y] = pos(e); ev('rxc_ev_mouse', 0, x, y, 0, 0);
+      // Windows raw input reports mouse deltas whether or not the cursor is locked: games that read the mouse through
+      // WM_INPUT get them as well as the absolute position
+      if ((e.movementX || e.movementY) && M && M._rxc_raw_mouse_wanted && M._rxc_raw_mouse_wanted()) ev('rxc_ev_mouse_raw', e.movementX, e.movementY);
+    }
+  });
+  canvas.addEventListener('mousedown', e => {
+    canvas.focus();
+    const [x, y] = locked() ? [-1, -1] : pos(e); ev('rxc_ev_mouse', 1, x, y, e.button, 0); e.preventDefault();
+  });
+  addEventListener('mouseup', e => { if (!started) return; const [x, y] = locked() ? [-1, -1] : pos(e); ev('rxc_ev_mouse', 2, x, y, e.button, 0); });
+  // the wheel zooms (paint mode, free camera). A mouse sends one event per notch (deltaY 100 in Chrome on Windows), a
+  // touchpad's two-finger scroll or pinch a stream of small deltas: one notch (120) per event of half a notch or more,
+  // else one per WHEEL_PX of summed deltas (?wheelpx=<n>), so that a scroll on a touchpad does not zoom all the way
+  const WHEEL_PX = +q.get('wheelpx') || 100; let wheelAcc = 0, wheelAt = 0;
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const px = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1), now = performance.now();
+    if (!px) return;
+    if (Math.abs(px) >= WHEEL_PX / 2) { wheelAcc = 0; ev('rxc_ev_mouse', 3, -1, -1, 0, -Math.sign(px) * 120); return; }
+    if (now - wheelAt > 500 || Math.sign(px) !== Math.sign(wheelAcc)) wheelAcc = 0;
+    wheelAt = now; wheelAcc += px;
+    if (Math.abs(wheelAcc) >= WHEEL_PX) { ev('rxc_ev_mouse', 3, -1, -1, 0, -Math.sign(wheelAcc) * 120); wheelAcc -= Math.sign(wheelAcc) * WHEEL_PX; }
+  }, { passive: false });
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  addEventListener('focus', () => ev('rxc_ev_focus', 1)); addEventListener('blur', () => { mmbUp(); ev('rxc_ev_focus', 0); });
+  // A GPU reset, a driver recovery or the GPU process running out of memory ends the WebGL context. With the
+  // graphics worker (the default) the canvas lives there and its {lost} message arrives instead (see the worker's
+  // onmessage below); this listener covers ?gfxworker=0.
+  const GPU_LOST = 'The browser lost its WebGL context: a GPU reset, a driver recovery, or the GPU process running out of memory. The game cannot rebuild its graphics state.\n\nReload the page to continue. If it keeps happening, close other tabs and apps and start the game at 540p with a 50% 3D resolution.';
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault();
+    showFatal('The graphics device was reset', GPU_LOST);
+  });
+  canvas.addEventListener('webglcontextrestored', () => showFatal('The graphics device was reset', 'Reload the page to continue.'));
+  document.addEventListener('pointerlockchange', () => $('hint').classList.toggle('show', started && !locked()));
+
+  // ---- audio: an AudioWorklet playing the PCM the game's audio device produces (rt/win32/wasapi.c). A small jitter
+  // buffer: playback starts with 80 ms queued and increases that target after an underrun, so late delivery plays in longer pieces instead of
+  // crackling; a gap decays to silence and the stream fades back in (no clicks); a backlog over 350 ms (the game ran
+  // ahead of the device) skips to 150 ms. Every second it reports underruns ({a: stats}: frames of silence, gaps,
+  // frames dropped, queue low/high in frames) - globalThis.__rxcAudio, read by tools/mc2bench.py.
+  const WORKLET = `class RexcompOut extends AudioWorkletProcessor {
+    constructor() { super(); this.q = []; this.off = 0; this.queued = 0; this.play = false; this.began = false; this.gain = 1; this.l = 0; this.r = 0; this.k = 0;
+      this.target = sampleRate * 0.08;
+      this.st = { starve: 0, gaps: 0, drop: 0, qmin: 1e9, qmax: 0 };
+      this.port.onmessage = e => { if (e.data && e.data.reset) { this.q = []; this.off = this.queued = 0; this.play = this.began = false; this.target = sampleRate * 0.08; this.gain = 0; this.l = this.r = 0; return; }
+        this.q.push(e.data); this.queued += e.data.length / 2;
+        if (this.queued > sampleRate * 0.35) { while (this.q.length > 1) { const f = this.q[0].length / 2 - this.off; if (this.queued - f < Math.max(sampleRate * 0.15, this.target)) break; this.q.shift(); this.queued -= f; this.st.drop += f; this.off = 0; } this.gain = 0; } }; }
+    process(inputs, outputs) { const out = outputs[0], L = out[0], R = out[1] || out[0], n = L.length; let i = 0;
+      if (!this.play && this.queued >= this.target) { this.play = true; this.began = true; this.gain = 0; }
+      if (this.play) {
+        while (i < n && this.q.length) { const b = this.q[0], frames = b.length / 2, take = Math.min(n - i, frames - this.off);
+          for (let k = 0; k < take; k++) { const g = this.gain; L[i + k] = b[(this.off + k) * 2] * g; R[i + k] = b[(this.off + k) * 2 + 1] * g; if (g < 1) this.gain = Math.min(1, g + 1 / 128); }
+          i += take; this.off += take; this.queued -= take; if (this.off >= frames) { this.q.shift(); this.off = 0; } }
+        if (i) { this.l = L[i - 1]; this.r = R[i - 1]; }
+        if (i < n) { this.play = false; this.target = Math.min(sampleRate * 0.24, this.target + sampleRate * 0.04); this.st.gaps++; }
+      }
+      if (i < n && this.began) this.st.starve += n - i;
+      for (; i < n; i++) { this.l *= 0.9; this.r *= 0.9; L[i] = this.l; R[i] = this.r; }
+      if (this.queued < this.st.qmin) this.st.qmin = this.queued; if (this.queued > this.st.qmax) this.st.qmax = this.queued;
+      if (++this.k % 375 === 0) { this.st.targetMs = this.target * 1000 / sampleRate; this.port.postMessage({ a: this.st }); this.st = { starve: 0, gaps: 0, drop: 0, qmin: 1e9, qmax: 0 }; }
+      return true; } }
+  registerProcessor('rexcomp-out', RexcompOut);`;
+  // AudioWorklet needs a secure context (https or localhost): over plain http (a Chromebook opening http://<pc>:8120) the same
+  // processor runs on the page thread behind a ScriptProcessorNode. 4096-frame callbacks (85 ms) ride out long game frames, at
+  // the cost of some latency. The node gets an AudioWorkletNode-shaped .port (library.js posts the PCM there). ?audio=script forces it.
+  function scriptOut(ctx) {
+    let Proc = null;
+    new Function('AudioWorkletProcessor', 'registerProcessor', 'sampleRate', WORKLET)(class { constructor() { this.port = {}; } }, (n, c) => { Proc = c; }, ctx.sampleRate);
+    const p = new Proc(), sp = ctx.createScriptProcessor(4096, 0, 2), port = { onmessage: null, postMessage: d => p.port.onmessage({ data: d }) };
+    p.port.postMessage = m => { if (port.onmessage) port.onmessage({ data: m }); };
+    sp.onaudioprocess = e => { const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+      for (let i = 0; i < L.length; i += 128) p.process([], [[L.subarray(i, i + 128), R.subarray(i, i + 128)]]); };
+    sp.port = port; console.log('[audio] no AudioWorklet (not a secure context): ScriptProcessor output');
+    return sp;
+  }
+  async function startAudio(M) {
+    try {
+      const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+      M.audioContext = ctx; M.soundOn = true;
+      const soundLabel = () => { $('bsound').textContent = !M.soundOn ? 'Sound: off' : ctx.state === 'running' ? 'Sound: on' : 'Sound: click to enable'; };
+      ctx.onstatechange = soundLabel; soundLabel();
+      ctx.resume().catch(() => soundLabel());
+      const ensureAudio = () => { if (M.soundOn && ctx.state !== 'running') ctx.resume().catch(soundLabel); };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureAudio(); });
+      addEventListener('focus', ensureAudio);
+      addEventListener('pointerdown', ensureAudio, true);
+      addEventListener('keydown', ensureAudio, true);
+      let node;
+      if (ctx.audioWorklet && q.get('audio') !== 'script') {
+        await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
+        node = new AudioWorkletNode(ctx, 'rexcomp-out', { numberOfInputs: 0, outputChannelCount: [2] });
+      } else node = scriptOut(ctx);
+      node.connect(ctx.destination); M.audioNode = node;
+      const an = ctx.createAnalyser(); an.fftSize = 2048; node.connect(an);
+      window.rxcAudioLevel = async ms => {
+        const buf = new Float32Array(an.fftSize), end = performance.now() + (ms || 3000); let n = 0, sum = 0, peak = 0, loud = 0, polls = 0;
+        while (performance.now() < end) { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) { s += v * v; if (Math.abs(v) > peak) peak = Math.abs(v); } sum += s; n += buf.length; polls++; if (Math.sqrt(s / buf.length) > 0.001) loud++; await new Promise(r => setTimeout(r, 40)); }
+        return { state: ctx.state, rms: Math.sqrt(sum / Math.max(1, n)), peak, audibleFraction: loud / Math.max(1, polls), destinationChannels: ctx.destination.channelCount };
+      };
+      // underrun totals since the last read (tools/mc2bench.py reads and resets them)
+      node.port.onmessage = e => { const a = e.data.a, t = globalThis.__rxcAudio || (globalThis.__rxcAudio = { starve: 0, gaps: 0, drop: 0, qmin: 1e9, qmax: 0 });
+        t.starve += a.starve; t.gaps += a.gaps; t.drop += a.drop; t.qmin = Math.min(t.qmin, a.qmin); t.qmax = Math.max(t.qmax, a.qmax); t.targetMs = a.targetMs; };
+      $('bsound').onclick = () => { M.soundOn = !M.soundOn || ctx.state !== 'running'; (M.soundOn ? ctx.resume() : ctx.suspend()).catch(() => {}).finally(soundLabel); soundLabel(); };
+    } catch (e) { console.warn('[audio] unavailable:', e); $('bsound').textContent = 'Sound: n/a'; }
+  }
+
+  // ---- debug: window.rxcDump(glTexture, w, h, isFloat, name) reads a render target back from the graphics worker and POSTs it
+  // as a PNG to the dev server (tools/serve_web.py -> build/<name>/shots/<name>.png). Texture ids come from the pass log
+  // (window.rexcomp.gfxWorker.postMessage({passlog: 1}), lines "-> rt texN").
+  // window.rxcProfile(ms, name, focus): samples the engine thread for ms and POSTs <name>.json: self and inclusive shares,
+  // the 4 callers under each sampled leaf ("callers"), and what each function named in focus (default: the compute and
+  // upload entry points) spends its time in ("kids": focus -> callee)
+  window.rxcProfile = async (ms, name, focus) => {
+    const P = new Profiler({ sampleInterval: 1, maxBufferSize: 200000 });
+    await new Promise(r => setTimeout(r, ms || 5000));
+    const t = await P.stop(), self = new Map(), incl = new Map(), calls = new Map(), kids = new Map(), fname = i => { const f = t.frames[i]; return f ? (f.name || '?') + (f.resourceId !== undefined && !f.name ? '@' + f.line : '') : '?'; };
+    const fo = new Set(focus || ['compute_dispatch', 'gfx_update_subresource', 'cs_run_range', 'gpu_pass', 'upload', 'rt_ic_lookup', 'get_module_handle']);
+    const up = st => st.parentId !== undefined ? t.stacks[st.parentId] : null, add = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+    let n = 0;
+    for (const s of t.samples) {
+      if (s.stackId === undefined) continue; n++;
+      let st = t.stacks[s.stackId]; const top = fname(st.frameId); add(self, top);
+      const chain = []; for (let q = up(st); q && chain.length < 4; q = up(q)) chain.push(fname(q.frameId));
+      add(calls, [top, ...chain].join(' <- '));
+      const seen = new Set(); let callee = null;
+      while (st) { const nm = fname(st.frameId); if (!seen.has(nm)) { seen.add(nm); add(incl, nm); if (fo.has(nm)) add(kids, nm + ' -> ' + (callee || '(self)')); } callee = nm; st = up(st); }
+    }
+    const top = (m, k) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, k).map(([f, c]) => `${(100 * c / n).toFixed(1)}% ${f}`);
+    const out = { samples: n, ms, self: top(self, 80), inclusive: top(incl, 150), callers: top(calls, 120), kids: top(kids, 80) };
+    await fetch('/upload/' + (name || 'profile') + '.json', { method: 'POST', body: JSON.stringify(out, null, 1) });
+    return n;
+  };
+  window.rxcDump = (tex, w, h, fl, name) => window.rexcomp.gfxWorker.postMessage({ readtex: [tex, w, h, fl ? 1 : 0, name || ('tex' + tex)] });
+  function rxcImage(im) {
+    const c = new OffscreenCanvas(im.w, im.h); c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(im.data.buffer), im.w, im.h), 0, 0);
+    c.convertToBlob({ type: 'image/png' }).then(b => fetch('/upload/' + im.name + '.png', { method: 'POST', body: b })).then(() => console.log('[dump] uploaded ' + im.name));
+  }
+
+  const PROG_KEY = 'rxcPrograms';
+  const loadLearned = () => { try { const a = JSON.parse(localStorage.getItem(PROG_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+  const saveLearned = () => {
+    const cur = globalThis.__rxcPrograms; if (!cur || !cur.length) return;
+    try { const all = new Set(loadLearned()); for (const k of cur) all.add(k); localStorage.setItem(PROG_KEY, JSON.stringify([...all].slice(-8000))); } catch (e) {}
+  };
+
+  // ---- start
+  const bar = $('bar').firstElementChild;
+  let gameDataComplete = false;
+  $('play').onclick = async () => {
+    if (started) return; started = true;
+    startupLogStart = performance.now(); startupLogActive = true; startupLog.textContent = '[0.0s] Starting…\n';
+    $('play').disabled = true; status('Loading engine…'); bar.parentElement.classList.add('indeterminate');
+    const t0 = performance.now();
+    M = {
+      onExit: code => { try { window.__rxcRelayClose && window.__rxcRelayClose('guest exit ' + code); } catch (e) {} },
+      canvas, arguments: [launchArgs()], yieldMode: PACE[pace][1], fpsCap: PACE[pace][2] || FPS, fileCacheMB: LOW_MEM ? 256 : 0,
+      // ?mt=N: N guest threads get a host thread of their own (0 = the threaded module, still cooperative)
+      gameBase: q.get('base') || GAME_BASE,
+      // the project (and Saved dir) is Chameleon, not the exe's PenguinHotel. AuthenticationGraph=Anonymous: device-id
+      // sign-in, answered by the EOS fake; without it sign-in fails ("invalid auth token") and Create Server stops.
+      iniSeed: [{ file: 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\Engine.ini', section: 'SystemSettings', values: { 'r.ScreenPercentage': effectiveScale(), ...WEB_CVARS } },
+        { file: 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\Engine.ini', section: 'EpicOnlineServices', values: { AuthenticationGraph: 'Anonymous' } },
+        ...qualitySeed(),
+        // audio: with -nothreading UE mixes on the game thread, once a frame, so its output queue has to outlast a slow
+        // frame - 6 x 1024 frames = 128 ms (the Windows default, 1 buffer -> 2 slots, is 43 ms). ?abuf=frames ?anbuf=buffers
+        { file: 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\Engine.ini', section: '/Script/WindowsTargetPlatform.WindowsTargetSettings',
+          values: { AudioCallbackBufferFrameSize: q.get('abuf') || '1024', AudioNumBuffersToEnqueue: q.get('anbuf') || '6' } },
+        { file: 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\Engine.ini', section: 'Audio', values: { UnfocusedVolumeMultiplier: q.get('ufvol') || '1.0' } },
+        // UE's frame-rate smoothing (on in this game) holds every frame to the running average of the game thread's work
+        // (UEngine::UpdateTimeAndHandleMaxTickRate; 17.6 ms in the mansion), so faster frames wait: 55.6 instead of 56.7
+        // fps there. The page paces frames itself (the 60 fps cap / vsync buttons). ?smooth=1 turns it on, ?smooth=game
+        // leaves the game's own setting
+        ...(q.get('smooth') === 'game' ? [] : [{ file: 'C:\\Users\\Player\\AppData\\Local\\Chameleon\\Saved\\Config\\Windows\\Engine.ini', section: '/Script/Engine.Engine', values: { bSmoothFrameRate: q.get('smooth') === '1' ? 'True' : 'False' } }])],
+      preRun: [m => { m.ENV.REXCOMP_MT = q.get('mt') || '0'; m.ENV.REXCOMP_SCREEN = res.join('x'); Object.assign(m.ENV, PORT_ENV, LOW_END ? LOW_END_ENV : {}); for (const [k, v] of q) if (k.startsWith('REXCOMP_')) m.ENV[k] = v; m.ENV.REXCOMP_RELAY = PROD_RELAY; }],   // debug switches, e.g. ?REXCOMP_INPUT=...; the relay is the build's, whatever the address says
+      print: s => { console.log(s); if (globalThis.__rxcSink) globalThis.__rxcSink.push(s); },
+      printErr: s => { console.error(s); if (globalThis.__rxcSink) globalThis.__rxcSink.push(s); },
+      onDownloadProgress: (loaded, total) => {
+        gameDataComplete = loaded === total;
+        bar.parentElement.classList.remove('indeterminate');
+        bar.style.width = (100 * loaded / total).toFixed(1) + '%';
+        status(`Executable image ${Math.floor(100 * loaded / total)}% (${(loaded / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB)`);
+      },
+      onStatus: s => {
+        if (gameDataComplete && /^starting/i.test(s)) { status('Executable image 100% downloaded · Starting game…'); return; }
+        if (!gameDataComplete) bar.parentElement.classList.add('indeterminate');
+        status(s);
+      },
+      onFirstFrame: () => { markQualityApplied(); flushStartupLog(); startupLogActive = false; bar.parentElement.classList.remove('indeterminate'); bar.style.width = '100%'; $('overlay').classList.add('hidden'); $('hint').classList.add('show'); setTimeout(() => $('hint').classList.remove('show'), 5000); canvas.focus(); syncLock(); },
+    };
+    const useWorker = q.get('gfxworker') !== '0' && !!canvas.transferControlToOffscreen;
+    window.rexcomp = M;
+    // graphics on a worker thread: the canvas is handed to rt/gfxworker (OffscreenCanvas) and the engine thread only
+    // records commands (rt/web/gfx_remote.c). ?gfxworker=0 keeps WebGL on the engine thread.
+    if (useWorker) {
+      try {
+        // (worker defaults, ?REXCOMP_...= overrides them) UE's HZB build and the other shared-memory compute passes are
+        // small here: replaying them unsliced is what the game had before the 16-row batches (each batch a fence + a
+        // worker task: ~45 ms of waiting a frame at 960x540, 54 -> 17 fps)
+        // A classic worker script cannot be cross-origin, and the canvas must only be handed over once the worker
+        // exists: transferring it first would leave a canvas nobody draws to if the worker could not be created, which
+        // is exactly what a page whose assets come from a CDN would hit (WebGL then stays on the engine thread).
+        // gfx-boot.js builds the worker: the plain file when it is same-origin, and a blob: URL rebuilt from it when
+        // the page is served from a CDN. The canvas is transferred only once the worker exists, so a failure here
+        // leaves the engine-thread path a canvas it can actually draw to.
+        const w = await rxcMakeGfxWorker(), off = canvas.transferControlToOffscreen(), env = { REXCOMP_CS_BATCH_ROWS: '65536' };
+        for (const [k, v] of q) if (k.startsWith('REXCOMP_') && !['REXCOMP_INPUT', 'REXCOMP_EXIT_AT', 'REXCOMP_SHOT'].includes(k)) env[k] = v;
+        M.__gfxEarly = [];
+        w.onmessage = e => {
+          if (e.data.img) return rxcImage(e.data.img);
+          if (e.data.lost) return showFatal('The graphics device was reset', GPU_LOST);
+          if (e.data.fatal) return showFatal('The graphics worker stopped', 'The graphics worker crashed: ' + e.data.fatal + '\n\nReload the page to continue.');
+          M.__gfxmsg ? M.__gfxmsg(e.data) : M.__gfxEarly.push(e.data);
+        };
+        w.onerror = e => { console.error('[gfx worker] ' + (e.message || e)); showFatal('The graphics worker stopped', 'The graphics worker failed: ' + fatalText(e) + '\n\nReload the page to continue.'); };
+        const noprelink = M.prelinkShaders === false || q.has('noprelink');
+        w.postMessage({ init: true, canvas: off, env, noprelink, learned: noprelink ? [] : loadLearned() }, [off]);
+        setInterval(saveLearned, 15000); addEventListener('pagehide', saveLearned);
+        M.gfxWorker = w;
+      } catch (e) { console.warn('[web] graphics worker unavailable, WebGL stays on the engine thread:', e); }
+    }
+    // the engine loads levels synchronously (no frames for many seconds): show a spinner whenever frames stop for 1.5 s
+    setInterval(() => { const t = M.__lastPresent; $('busy').classList.toggle('show', !!t && performance.now() - t > 1500); }, 250);
+    if (q.has('logsink')) {
+      globalThis.__rxcSink = [];
+      fetch('/log?start=1', { method: 'POST', body: '' });
+      setInterval(() => { const b = globalThis.__rxcSink; if (!b.length) return; globalThis.__rxcSink = []; fetch('/log', { method: 'POST', body: b.join('\n') + '\n' }); }, 1000);
+      let dumped = 0;
+      setInterval(() => { const t = M.__lastPresent; if (t && performance.now() - t > 12000 && performance.now() - dumped > 60000 && M._rxc_dbg_thrdump) { dumped = performance.now(); M._rxc_dbg_thrdump(); } }, 2000);
+    }
+    await startAudio(M);                   // inside the click: user activation lets the AudioContext start
+    Rexcomp(M).catch(e => {
+      status('Failed to start: ' + e);
+      if (outOfMemory(e)) showFatal('Not enough memory', 'The browser could not give the game the memory it needs: about 1.9 GB for the game itself, plus the game files it has read (capped at 256 MB on a 4 GB device).\n\nClose other tabs and apps, then reload. If this device has 4 GB, also try 540p with a 50% 3D resolution and the 30 fps cap.');
+      else showFatal('The game stopped', 'It failed while starting: ' + fatalText(e) + '\n\nReload the page to continue. The Log button (F9) keeps the engine log.');
+      console.error(e); if (globalThis.__rxcSink) globalThis.__rxcSink.push('[web] main thread crashed: ' + (e && e.stack ? e.stack : e));
+    });
+    // the page stays interactive while main() runs on its own JSPI stack; clicking the canvas captures the mouse
+    canvas.focus(); syncLock();
+  };
+  // the game starts with the page: no landing screen, one click to play is gone. A browser without WebAssembly JSPI
+  // leaves the (hidden, disabled) Play button alone and the status line says what to use. Sound still needs a gesture:
+  // the AudioContext starts suspended and startAudio's pointerdown / keydown / focus handlers resume it on the first one.
+  if (!$('play').disabled) $('play').onclick();
+})();
+</script>
+<script src="install.js?v=5" defer></script>
+</body></html>
